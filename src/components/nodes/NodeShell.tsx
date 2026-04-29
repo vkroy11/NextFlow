@@ -1,0 +1,209 @@
+"use client";
+
+import { useState, useEffect, useRef, type ReactNode } from "react";
+import {
+  Copy,
+  CopyPlus,
+  Info,
+  Lock,
+  LockOpen,
+  MoreHorizontal,
+  Play,
+  RotateCcw,
+  Loader2,
+  Trash2,
+} from "lucide-react";
+import { useWorkflowStore } from "@/store/useWorkflowStore";
+import { useWorkflowRun } from "../canvas/RunContext";
+import { cn } from "@/lib/utils";
+
+type NodeShellProps = {
+  id: string;
+  title: string;
+  tooltip?: string;
+  selected?: boolean;
+  children: ReactNode;
+  width?: number;
+  deletable?: boolean;
+  showRun?: boolean;
+  showMenu?: boolean;
+  onRun?: () => void;
+  headerLeft?: ReactNode;
+  headerExtras?: ReactNode;
+  customHeader?: ReactNode;
+};
+
+export function NodeShell({
+  id,
+  title,
+  tooltip,
+  selected,
+  children,
+  width = 380,
+  deletable = true,
+  showRun = true,
+  showMenu,
+  onRun,
+  headerLeft,
+  headerExtras,
+  customHeader,
+}: NodeShellProps) {
+  const removeNode = useWorkflowStore((s) => s.removeNode);
+  const duplicateNode = useWorkflowStore((s) => s.duplicateNode);
+  const toggleLock = useWorkflowStore((s) => s.toggleLock);
+  const node = useWorkflowStore((s) => s.nodes.find((n) => n.id === id));
+  const locked = Boolean(node?.data?.locked);
+  const runStatus = useWorkflowStore((s) => s.runStatus[id]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Default: show the menu only when the node is deletable. RequestInputs +
+  // Response (deletable=false) hide the menu entirely; Gemini + Crop keep it.
+  const shouldShowMenu = showMenu ?? deletable;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [menuOpen]);
+
+  // While ANY workflow run is in flight (full or single-node), every per-node
+  // Run button is disabled — prevents kicking off competing runs from
+  // different cards while the current one is still resolving.
+  const { isRunning: globalRunning } = useWorkflowRun();
+  const isRunning = runStatus === "running" || globalRunning;
+
+  return (
+    <div
+      style={{ width }}
+      className={cn(
+        "rounded-xl border bg-white shadow-2xl transition-all duration-200",
+        selected
+          ? "border-gray-200 ring-2 ring-workflow-accent-500"
+          : "border-gray-200",
+        isRunning && "nf-running",
+        runStatus === "success" && "border-green-400/60",
+        runStatus === "failed" && "border-red-400/60",
+      )}
+    >
+      {customHeader ?? (
+        <div className="flex items-start justify-between gap-2 border-b border-gray-100 px-4 py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {headerLeft}
+            <span className="w-full min-w-0 cursor-grab select-none truncate text-sm font-medium text-gray-900 flex items-center gap-1">
+              {title}
+              {tooltip && (
+              <span className="group/tip relative shrink-0">
+                <Info className="h-3.5 w-3.5 cursor-default text-gray-400" />
+                <span className="pointer-events-none absolute left-1/2 top-full z-[9999] mt-1.5 hidden w-max max-w-[260px] -translate-x-1/2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] font-normal leading-relaxed text-gray-700 shadow-lg group-hover/tip:block">
+                  {tooltip}
+                </span>
+              </span>
+            )}
+            </span>
+            
+          </div>
+          <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
+            {headerExtras}
+            {showRun && (
+              <>
+                <button
+                  className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  title="Reset node"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={onRun}
+                  disabled={isRunning}
+                  className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium text-green-600 transition-all hover:bg-green-500/30 disabled:opacity-60"
+                >
+                  {isRunning ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Play className="h-3 w-3 fill-current" />
+                  )}
+                  <span>Run</span>
+                </button>
+              </>
+            )}
+            {shouldShowMenu && (
+              <div ref={menuRef} className="relative">
+                <button
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="nodrag inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-500 hover:bg-gray-100"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="More"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+                {menuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full z-[9999] mt-1.5 w-52 overflow-hidden rounded-xl border border-gray-200 bg-white py-1.5 text-[13px] text-gray-700 shadow-xl"
+                  >
+                    <button
+                      onClick={() => {
+                        duplicateNode(id, false);
+                        setMenuOpen(false);
+                      }}
+                      className="nodrag flex w-full items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 hover:text-gray-900"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-gray-500" />
+                      Duplicate
+                    </button>
+                    <button
+                      onClick={() => {
+                        duplicateNode(id, true);
+                        setMenuOpen(false);
+                      }}
+                      className="nodrag flex w-full items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 hover:text-gray-900"
+                    >
+                      <CopyPlus className="h-3.5 w-3.5 text-gray-500" />
+                      Duplicate with Edges
+                    </button>
+                    <div className="my-1 border-t border-gray-100" />
+                    <button
+                      onClick={() => {
+                        toggleLock(id);
+                        setMenuOpen(false);
+                      }}
+                      className="nodrag flex w-full items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 hover:text-gray-900"
+                    >
+                      {locked ? (
+                        <LockOpen className="h-3.5 w-3.5 text-gray-500" />
+                      ) : (
+                        <Lock className="h-3.5 w-3.5 text-gray-500" />
+                      )}
+                      {locked ? "Unlock" : "Lock"}
+                    </button>
+                    {deletable && (
+                      <>
+                        <div className="my-1 border-t border-gray-100" />
+                        <button
+                          onClick={() => {
+                            removeNode(id);
+                            setMenuOpen(false);
+                          }}
+                          className="nodrag flex w-full items-center gap-2.5 px-3 py-1.5 text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="px-4 py-4">{children}</div>
+    </div>
+  );
+}

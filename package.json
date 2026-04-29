@@ -4,22 +4,44 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
+    "db:push": "dotenv -e .env.local -- prisma db push",
+    "db:migrate": "dotenv -e .env.local -- prisma migrate dev",
+    "db:studio": "dotenv -e .env.local -- prisma studio",
+    "trigger:dev": "npx trigger.dev@latest dev",
+    "trigger:deploy": "npx trigger.dev@latest deploy"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.2.7",
+    "@google/generative-ai": "^0.24.1",
+    "@prisma/client": "^6.19.3",
+    "@trigger.dev/sdk": "^4.4.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.12.0",
     "next": "16.2.4",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "reactflow": "^11.11.4",
+    "sharp": "^0.34.5",
+    "tailwind-merge": "^3.5.0",
+    "transloadit": "^4.10.0",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@trigger.dev/build": "^4.4.4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

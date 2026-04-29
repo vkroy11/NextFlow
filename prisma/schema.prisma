@@ -1,0 +1,78 @@
+// NextFlow data model. Postgres (Neon) for both dev and prod — Vercel serverless
+// runtime has no persistent fs, so SQLite is not viable.
+//
+// Vercel's Prisma-Postgres integration injects:
+//   PRISMA_DATABASE_URL — pooled (Accelerate) URL, used at runtime
+//   POSTGRES_URL        — direct, non-pooled URL, used for migrations
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("PRISMA_DATABASE_URL")
+  directUrl = env("POSTGRES_URL")
+}
+
+model Workflow {
+  id        String        @id @default(cuid())
+  userId    String        // Clerk user id (sub)
+  name      String
+  nodes     Json
+  edges     Json
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  runs      WorkflowRun[]
+
+  @@index([userId, updatedAt])
+}
+
+enum RunScope {
+  FULL
+  SINGLE
+  MULTI
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL
+  CANCELLED
+}
+
+model WorkflowRun {
+  id            String     @id @default(cuid())
+  workflowId    String
+  workflow      Workflow   @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  userId        String
+  scope         RunScope   @default(FULL)
+  status        RunStatus  @default(QUEUED)
+  startedAt     DateTime   @default(now())
+  finishedAt    DateTime?
+  triggerRunId  String?    // Trigger.dev run handle for live polling
+  targetNodeIds Json?      // for SINGLE/MULTI scope: which nodes were targeted
+  error         String?
+  nodeRuns      NodeRun[]
+
+  @@index([workflowId, startedAt])
+  @@index([userId, startedAt])
+}
+
+model NodeRun {
+  id             String      @id @default(cuid())
+  workflowRunId  String
+  workflowRun    WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  nodeId         String      // canvas node id
+  nodeType       String      // "requestInputs" | "cropImage" | "gemini" | "response"
+  status         RunStatus   @default(QUEUED)
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  durationMs     Int?
+  input          Json?
+  output         Json?
+  error          String?
+
+  @@index([workflowRunId, startedAt])
+}

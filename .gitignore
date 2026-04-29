@@ -12,7 +12,10 @@
 
 # testing
 /coverage
+DEPLOYMENT.md
+CLAUDE.md
 
+/_references
 # next.js
 /.next/
 /out/

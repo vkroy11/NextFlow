@@ -2,25 +2,96 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0a0a0a;
+  --canvas: #f4f4f4;
+  --node-border: #e5e7eb;
+  --node-border-strong: #d4d4d8;
+
+  /* Workflow accent (Galaxy.ai indigo) */
+  --workflow-accent-400: #818cf8;
+  --workflow-accent-500: #6366f1;
+  --workflow-accent-600: #4f46e5;
+  --workflow-accent-700: #4338ca;
+
+  /* Handle / edge type colors */
+  --handle-text: #f59e0b; /* amber */
+  --handle-image: #06b6d4; /* cyan */
+  --handle-vision: #ec4899; /* magenta */
+  --handle-response: #22c55e; /* green */
+  --handle-video: #6366f1; /* indigo */
+  --handle-audio: #8b5cf6; /* violet */
+  --handle-file: #71717a; /* zinc */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-canvas: var(--canvas);
+  --color-node-border: var(--node-border);
+  --color-node-border-strong: var(--node-border-strong);
+  --color-workflow-accent-400: var(--workflow-accent-400);
+  --color-workflow-accent-500: var(--workflow-accent-500);
+  --color-workflow-accent-600: var(--workflow-accent-600);
+  --color-workflow-accent-700: var(--workflow-accent-700);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+body {
+  background: var(--canvas);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+}
+
+/* React Flow surface tweaks to match Galaxy.ai */
+.react-flow {
+  background: var(--canvas);
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+.react-flow__handle {
+  width: 14px !important;
+  height: 14px !important;
+  border: 2px solid white !important;
+  border-radius: 9999px !important;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+@keyframes nf-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.nf-running {
+  animation: nf-pulse 1.4s ease-in-out infinite;
+}
+
+/* React Flow ships built-in styles for `default`, `input`, `output`, `group`
+ * node types (padding, border, white background, fixed width, centered text).
+ * Our custom node `input` collides with `.react-flow__node-input`, which is
+ * what was painting the white square behind the Input node. Strip all four so
+ * the NodeShell / StickyNote components own the entire visual. */
+.react-flow__node-default,
+.react-flow__node-input,
+.react-flow__node-output,
+.react-flow__node-group {
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  width: auto !important;
+  text-align: left !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  border-radius: 0 !important;
 }
