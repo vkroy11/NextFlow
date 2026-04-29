@@ -5,7 +5,13 @@
 //   PRISMA_DATABASE_URL — pooled (Accelerate) URL, used at runtime
 //   POSTGRES_URL        — direct, non-pooled URL, used for migrations
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Trigger.dev cloud workers and Vercel Lambda runtimes both run on
+  // Debian + OpenSSL 3 — without these targets Prisma packages only the
+  // local Mac engine and the deployed runtime panics with
+  // "Prisma Client could not locate the Query Engine for runtime
+  // debian-openssl-3.0.x". Keep `native` so local dev still works.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
