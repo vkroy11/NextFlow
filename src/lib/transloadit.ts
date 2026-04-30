@@ -27,6 +27,14 @@ function client() {
  *
  * The orchestrator adds the mandatory 30 s artificial delay; this function
  * returns as soon as the assembly's CDN URL is ready.
+ *
+ * Two source paths are supported:
+ *   - `http(s)://…` URLs (the normal case from the new upload pipeline) →
+ *     consumed via `/http/import` so Transloadit pulls them directly.
+ *   - `data:image/…;base64,…` URLs (legacy / imported workflows from before
+ *     we wired up `/api/uploads`) → decoded into a temp file and uploaded
+ *     into the assembly via `/upload/handle` as the `:original` step.
+ *     `/http/import` outright rejects data URLs with HTTP_IMPORT_VALIDATION.
  */
 export async function cropImageViaTransloadit(input: {
   inputUrl: string;
@@ -36,35 +44,71 @@ export async function cropImageViaTransloadit(input: {
   h: number;
 }): Promise<{ url: string; assemblyId: string }> {
   const c = client();
+  const isDataUrl = input.inputUrl.startsWith("data:");
 
-  const result = await c.createAssembly({
-    params: {
-      steps: {
-        imported: {
-          robot: "/http/import",
-          url: input.inputUrl,
-        },
-        cropped: {
-          robot: "/image/resize",
-          use: "imported",
-          format: "jpg",
-          imagemagick_stack: "v3.0.0",
-          // Percentage-geometry crop: x1,y1 = top-left, x2,y2 = bottom-right.
-          crop: {
-            x1: `${input.x}%`,
-            y1: `${input.y}%`,
-            x2: `${input.x + input.w}%`,
-            y2: `${input.y + input.h}%`,
+  const cropStep = {
+    robot: "/image/resize",
+    // Source step name differs by branch — see below.
+    use: isDataUrl ? ":original" : "imported",
+    format: "jpg",
+    imagemagick_stack: "v3.0.0",
+    crop: {
+      x1: `${input.x}%`,
+      y1: `${input.y}%`,
+      x2: `${input.x + input.w}%`,
+      y2: `${input.y + input.h}%`,
+    },
+  } as const;
+
+  let tmpPath: string | null = null;
+  try {
+    let result: Awaited<ReturnType<InstanceType<typeof Transloadit>["createAssembly"]>>;
+
+    if (isDataUrl) {
+      const commaIdx = input.inputUrl.indexOf(",");
+      if (commaIdx === -1) throw new Error("malformed data url");
+      const meta = input.inputUrl.slice(0, commaIdx);
+      const b64 = input.inputUrl.slice(commaIdx + 1);
+      const ext = /data:image\/([a-zA-Z0-9.+-]+)/.exec(meta)?.[1]?.split(";")[0] ?? "jpg";
+      const buf = Buffer.from(b64, "base64");
+      tmpPath = join(
+        tmpdir(),
+        `nf-crop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
+      );
+      await writeFile(tmpPath, buf);
+      result = await c.createAssembly({
+        files: { input: tmpPath },
+        params: {
+          steps: {
+            ":original": {
+              robot: "/upload/handle",
+            },
+            cropped: cropStep,
           },
         },
-      },
-    },
-    waitForCompletion: true,
-  });
+        waitForCompletion: true,
+      });
+    } else {
+      result = await c.createAssembly({
+        params: {
+          steps: {
+            imported: {
+              robot: "/http/import",
+              url: input.inputUrl,
+            },
+            cropped: cropStep,
+          },
+        },
+        waitForCompletion: true,
+      });
+    }
 
-  const url = result?.results?.cropped?.[0]?.ssl_url ?? result?.results?.cropped?.[0]?.url;
-  if (!url) throw new Error(`Transloadit crop produced no output url (assembly ${result?.assembly_id})`);
-  return { url, assemblyId: result.assembly_id ?? "" };
+    const url = result?.results?.cropped?.[0]?.ssl_url ?? result?.results?.cropped?.[0]?.url;
+    if (!url) throw new Error(`Transloadit crop produced no output url (assembly ${result?.assembly_id})`);
+    return { url, assemblyId: result.assembly_id ?? "" };
+  } finally {
+    if (tmpPath) await unlink(tmpPath).catch(() => {});
+  }
 }
 
 /**

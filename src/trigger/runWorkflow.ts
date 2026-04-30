@@ -74,32 +74,50 @@ export const runWorkflowTask = task({
       data: { status: "RUNNING" },
     });
 
-    // node id → resolved output promise
-    const promises = new Map<string, Promise<NodeOutput>>();
+    // Memoize once-resolved outputs and once-failed errors so a node visited
+    // twice (e.g. as parent of multiple downstream nodes) does not re-run
+    // and does not silently lose its error.
+    const outputs = new Map<string, NodeOutput>();
+    const errors = new Map<string, unknown>();
 
-    function getPromise(nodeId: string): Promise<NodeOutput> {
-      const cached = promises.get(nodeId);
+    async function runNode(nodeId: string): Promise<NodeOutput> {
+      const cached = outputs.get(nodeId);
       if (cached) return cached;
+      const cachedErr = errors.get(nodeId);
+      if (cachedErr !== undefined) throw cachedErr;
       const node = byId.get(nodeId);
       if (!node) throw new Error(`node ${nodeId} not in graph`);
 
-      const p = (async (): Promise<NodeOutput> => {
-        const parentIds = inn.get(nodeId) ?? [];
-        // Eager fan-out + sequential await:
-        //   .map() synchronously calls getPromise for every parent. Each
-        //   call's async IIFE runs to its first triggerAndWait, which fires
-        //   the underlying child task on the worker side — so all children
-        //   start *in parallel* even though we never wrap their waits in
-        //   Promise.all (which Trigger.dev v4 forbids). Awaiting the
-        //   resulting promises one at a time keeps only a single wait
-        //   pending in this task's frame at any moment.
-        const parentPairs = parentIds.map((pid) => [pid, getPromise(pid)] as const);
-        const parentByEdge: Record<string, NodeOutput> = {};
-        for (const [pid, promise] of parentPairs) {
-          parentByEdge[pid] = await promise;
-        }
+      // Trigger.dev v4 disallows multiple triggerAndWaits being "pending"
+      // on the same task at the same time — including via eager-fan-out
+      // IIFEs we tried earlier. The orchestrator now walks the DAG strictly
+      // sequentially: parents resolve completely before this node's task
+      // is even invoked. Loses sibling concurrency, but the run actually
+      // finishes (no more "Parallel waits are not supported" crash).
+      const parentIds = inn.get(nodeId) ?? [];
+      const parentByEdge: Record<string, NodeOutput> = {};
+      for (const pid of parentIds) {
+        parentByEdge[pid] = await runNode(pid);
+      }
 
-        switch (node.type) {
+      let output: NodeOutput;
+      try {
+        output = await runNodeBody(node, parentByEdge);
+      } catch (err) {
+        errors.set(nodeId, err);
+        throw err;
+      }
+      outputs.set(nodeId, output);
+      return output;
+    }
+
+    async function runNodeBody(
+      node: CanvasNode,
+      parentByEdge: Record<string, NodeOutput>,
+    ): Promise<NodeOutput> {
+      const nodeId = node.id;
+      const parentIds = Object.keys(parentByEdge);
+      switch (node.type) {
           case "requestInputs": {
             // Pass-through node — inline the NodeRun write here so we skip the
             // ~3s Trigger scheduling overhead of triggerAndWait. The shape
@@ -270,24 +288,16 @@ export const runWorkflowTask = task({
           }
           default:
             throw new Error(`unknown node type: ${node.type}`);
-        }
-      })();
-
-      promises.set(nodeId, p);
-      return p;
+      }
     }
 
     const targets = scope === "FULL" ? nodes.filter((n) => executable.has(n.id)) : nodes.filter((n) => executable.has(n.id));
-    // Same eager-fan-out trick at the top level — kick off every leaf's
-    // promise (which transitively eager-fires its ancestors via the parent
-    // pairs above), then await them sequentially. Independent branches of
-    // the DAG run concurrently on the workers; this orchestrator only ever
-    // waits on one promise at a time so the Trigger v4 checkpointer is happy.
-    const leafPairs = targets.map((n) => [n.id, getPromise(n.id)] as const);
+    // Top-level walk is also strictly sequential. The runNode memo means a
+    // node visited as both a leaf and a parent only triggers its task once.
     const results: PromiseSettledResult<NodeOutput>[] = [];
-    for (const [, promise] of leafPairs) {
+    for (const n of targets) {
       try {
-        const value = await promise;
+        const value = await runNode(n.id);
         results.push({ status: "fulfilled", value });
       } catch (reason) {
         results.push({ status: "rejected", reason });
