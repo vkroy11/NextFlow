@@ -70,16 +70,47 @@ export function NodeShell({
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen]);
 
-  // Two related but distinct concerns:
-  //   - `nodeIsRunning` drives the pulsate animation. ONLY the node whose
-  //     task is currently executing should pulsate — running an isolated
-  //     node shouldn't make every other card on the canvas throb too.
-  //   - `runDisabled` guards the per-node Run button so users can't kick
-  //     off competing runs from different cards while any run is still
-  //     resolving (full-flow or single-node).
+  // Three distinct flags drive the Run button:
+  //   - `nodeIsRunning` — this node's worker is currently executing on
+  //     Trigger.dev. Drives the pulsate animation on the card and the
+  //     Run-button spinner.
+  //   - `globalRunning` — *any* run (full-flow or single-node) is in
+  //     flight; flips on synchronously when the user fires `triggerRun`.
+  //     Disables every Run button on the canvas to prevent competing runs.
+  //   - `submitting` — local optimistic flag, set to `true` synchronously
+  //     the moment this node's Run is clicked. Closes the perceptible gap
+  //     between the click and the API/poll cycle confirming the run has
+  //     started: without this, the button was rendering as enabled until
+  //     `runStatus` reached "running" several seconds later.
   const { isRunning: globalRunning } = useWorkflowRun();
   const nodeIsRunning = runStatus === "running";
-  const runDisabled = nodeIsRunning || globalRunning;
+  const [submitting, setSubmitting] = useState(false);
+
+  // Clear the optimistic flag once we observe real signal — either the
+  // worker picked up the task (nodeIsRunning) or the entire run is over
+  // (globalRunning back to false). React's officially-recommended
+  // "adjust state in response to prop changes" pattern is to compare a
+  // snapshot during render rather than do it in useEffect (which trips
+  // the react-hooks/set-state-in-effect lint and can cascade renders).
+  const [signalSnapshot, setSignalSnapshot] = useState({ nodeIsRunning, globalRunning });
+  if (
+    signalSnapshot.nodeIsRunning !== nodeIsRunning ||
+    signalSnapshot.globalRunning !== globalRunning
+  ) {
+    setSignalSnapshot({ nodeIsRunning, globalRunning });
+    if (submitting && (nodeIsRunning || !globalRunning)) {
+      setSubmitting(false);
+    }
+  }
+
+  const runDisabled = nodeIsRunning || globalRunning || submitting;
+  const showRunSpinner = nodeIsRunning || submitting;
+
+  const handleRunClick = () => {
+    if (runDisabled) return;
+    setSubmitting(true);
+    onRun?.();
+  };
 
   return (
     <div
@@ -122,13 +153,15 @@ export function NodeShell({
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={onRun}
+                  onClick={handleRunClick}
                   disabled={runDisabled}
-                  className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium text-green-600 transition-all hover:bg-green-500/30 disabled:opacity-60"
+                  className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium text-green-600 transition-all hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {/* Spinner only on the node actively executing — every
-                   *  other card just stays disabled but visually idle. */}
-                  {nodeIsRunning ? (
+                  {/* Spinner shows on either the actively-executing node or
+                   *  the node whose Run was just clicked but hasn't reached
+                   *  Trigger yet. Other cards on the canvas remain idle but
+                   *  disabled while a competing run is in flight. */}
+                  {showRunSpinner ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <Play className="h-3 w-3 fill-current" />

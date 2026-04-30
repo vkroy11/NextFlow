@@ -43,12 +43,21 @@ export function ResponseNode({ id, data, selected }: NodeProps<Data>) {
         const index = sameType.findIndex((n) => n.id === sourceNode.id) + 1;
         const autoLabel = `${baseName}_${index}`;
         const customLabel = data?.labels?.[edge.id];
+        // Primary source: the per-edge perEdge map written by pollRun after
+        // a workflow run succeeds. Fallback: read whatever the upstream
+        // node currently has stored on its own data, so a freshly-connected
+        // edge shows the existing crop / gemini / input value immediately
+        // instead of "No output yet" until the next run.
+        const perEdgeResult = data?.results?.[edge.id];
+        const result =
+          (perEdgeResult ?? null) ??
+          deriveUpstreamResult(sourceNode, edge.sourceHandle ?? null);
         return {
           edgeId: edge.id,
           label: customLabel || autoLabel,
           autoLabel,
           color: colorForHandle(edge.sourceHandle),
-          result: data?.results?.[edge.id] ?? null,
+          result,
           sourceType: sourceNode.type ?? "",
         };
       })
@@ -300,6 +309,48 @@ function looksLikeImageUrl(v: string): boolean {
   // Strip query so .png?sig=... still matches.
   const path = v.split("?")[0];
   return /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(path);
+}
+
+/**
+ * Inspect the upstream node's currently-stored data and return the value
+ * the Response card should show when the per-edge results map (written by
+ * pollRun) doesn't have an entry yet — e.g. immediately after the user
+ * connects an edge, or if pollRun missed the response NodeRun for any
+ * reason. Mirrors what the runtime `runResponseInline` would have written.
+ */
+type RFNode = { id: string; type?: string; data?: unknown };
+function deriveUpstreamResult(sourceNode: RFNode, sourceHandle: string | null): string | null {
+  const data = (sourceNode.data ?? {}) as {
+    outputUrl?: string | null;
+    response?: string | null;
+    fields?: Array<{ key: string; value: unknown }>;
+    fieldType?: string;
+    value?: unknown;
+  };
+  if (sourceNode.type === "cropImage") {
+    return typeof data.outputUrl === "string" ? data.outputUrl : null;
+  }
+  if (sourceNode.type === "gemini") {
+    return typeof data.response === "string" ? data.response : null;
+  }
+  if (sourceNode.type === "requestInputs") {
+    const f = data.fields?.find((field) => field.key === sourceHandle);
+    if (!f) return null;
+    if (typeof f.value === "string") return f.value;
+    if (typeof f.value === "number" || typeof f.value === "boolean") return String(f.value);
+    if (f.value && typeof f.value === "object" && "url" in f.value) {
+      return (f.value as { url: string }).url;
+    }
+    return null;
+  }
+  if (sourceNode.type === "input") {
+    const v = data.value;
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (v && typeof v === "object" && "url" in v) return (v as { url: string }).url;
+    return null;
+  }
+  return null;
 }
 
 function RenameInput({
