@@ -2,10 +2,11 @@ import { task } from "@trigger.dev/sdk/v3";
 import { prisma } from "@/lib/prisma";
 import { buildAdjacency, hasCycle, upstreamClosure } from "@/lib/dag";
 import type { CanvasEdge, CanvasNode } from "@/lib/types";
-import { cropImageTask, type CropOutput } from "./cropImage";
-import { geminiTask, type GeminiOutput } from "./gemini";
-import { requestInputsTask, type RequestInputsOutput } from "./requestInputs";
-import { responseTask, type ResponseOutput } from "./response";
+import { type CropOutput } from "./cropImage";
+import { type GeminiOutput } from "./gemini";
+import { type RequestInputsOutput } from "./requestInputs";
+import { type ResponseOutput } from "./response";
+import { nodeRunnerTask, type NodeRunnerPayload } from "./nodeRunner";
 
 type Scope = "FULL" | "SINGLE" | "MULTI";
 
@@ -315,65 +316,73 @@ export const runWorkflowTask = task({
         groups.delete(inlineType);
       }
 
-      // 2) Crop batch — all crops at this level fan out concurrently.
+      // 2) Mixed-type batch via node-runner.
+      //
+      // We collapse every executable Trigger task type at this level into a
+      // single `nodeRunnerTask.batchTriggerAndWait`. The discriminator
+      // (`kind: "crop" | "gemini"`) tells the dispatcher which worker
+      // function to call inside each run. From the orchestrator's view this
+      // is *one* pending wait (Trigger v4 happy) but on the worker side all
+      // crops + geminis at this DAG level fire at T = 0 concurrently.
       const cropNodes = groups.get("cropImage") ?? [];
-      if (cropNodes.length > 0) {
-        type CropPayload = ReturnType<typeof buildCropPayload>;
-        const valid: { node: CanvasNode; payload: CropPayload }[] = [];
-        for (const node of cropNodes) {
-          const parents = collectParentByEdge(node.id);
-          if (!parents.ok) {
-            errors.set(node.id, parents.err);
-            continue;
-          }
-          try {
-            valid.push({ node, payload: buildCropPayload(node, parents.map) });
-          } catch (err) {
-            errors.set(node.id, err);
-          }
+      const geminiNodes = groups.get("gemini") ?? [];
+      type Slot = { nodeId: string; payload: NodeRunnerPayload };
+      const slots: Slot[] = [];
+
+      for (const node of cropNodes) {
+        const parents = collectParentByEdge(node.id);
+        if (!parents.ok) {
+          errors.set(node.id, parents.err);
+          continue;
         }
-        if (valid.length > 0) {
-          const batch = await cropImageTask.batchTriggerAndWait(
-            valid.map((v) => ({ payload: v.payload })),
-          );
-          for (let i = 0; i < valid.length; i++) {
-            const r = batch.runs[i];
-            if (r.ok) outputs.set(valid[i].node.id, { kind: "cropImage", output: r.output });
-            else errors.set(valid[i].node.id, new Error(`crop failed: ${r.error}`));
-          }
+        try {
+          slots.push({
+            nodeId: node.id,
+            payload: { kind: "crop", ...buildCropPayload(node, parents.map) },
+          });
+        } catch (err) {
+          errors.set(node.id, err);
         }
-        groups.delete("cropImage");
+      }
+      for (const node of geminiNodes) {
+        const parents = collectParentByEdge(node.id);
+        if (!parents.ok) {
+          errors.set(node.id, parents.err);
+          continue;
+        }
+        try {
+          slots.push({
+            nodeId: node.id,
+            payload: { kind: "gemini", ...buildGeminiPayload(node, parents.map) },
+          });
+        } catch (err) {
+          errors.set(node.id, err);
+        }
       }
 
-      // 3) Gemini batch — same concurrency strategy.
-      const geminiNodes = groups.get("gemini") ?? [];
-      if (geminiNodes.length > 0) {
-        type GeminiPayload = ReturnType<typeof buildGeminiPayload>;
-        const valid: { node: CanvasNode; payload: GeminiPayload }[] = [];
-        for (const node of geminiNodes) {
-          const parents = collectParentByEdge(node.id);
-          if (!parents.ok) {
-            errors.set(node.id, parents.err);
+      if (slots.length > 0) {
+        const batch = await nodeRunnerTask.batchTriggerAndWait(
+          slots.map((s) => ({ payload: s.payload })),
+        );
+        for (let i = 0; i < slots.length; i++) {
+          const r = batch.runs[i];
+          const nodeId = slots[i].nodeId;
+          if (!r.ok) {
+            errors.set(nodeId, new Error(`node-runner failed: ${r.error}`));
             continue;
           }
-          try {
-            valid.push({ node, payload: buildGeminiPayload(node, parents.map) });
-          } catch (err) {
-            errors.set(node.id, err);
+          // Map the dispatcher's `kind` back to the orchestrator's
+          // `NodeOutput.kind` (which uses the canonical canvas node-type
+          // strings the resolvers downstream already expect).
+          if (r.output.kind === "crop") {
+            outputs.set(nodeId, { kind: "cropImage", output: r.output.output });
+          } else if (r.output.kind === "gemini") {
+            outputs.set(nodeId, { kind: "gemini", output: r.output.output });
           }
         }
-        if (valid.length > 0) {
-          const batch = await geminiTask.batchTriggerAndWait(
-            valid.map((v) => ({ payload: v.payload })),
-          );
-          for (let i = 0; i < valid.length; i++) {
-            const r = batch.runs[i];
-            if (r.ok) outputs.set(valid[i].node.id, { kind: "gemini", output: r.output });
-            else errors.set(valid[i].node.id, new Error(`gemini failed: ${r.error}`));
-          }
-        }
-        groups.delete("gemini");
       }
+      groups.delete("cropImage");
+      groups.delete("gemini");
 
       // Any unhandled types that snuck in — surface as errors so we don't
       // silently drop nodes.
@@ -561,4 +570,8 @@ function resolveTextInput(
 }
 
 // Re-export so the trigger compiler picks up all tasks via this entry.
-export { cropImageTask, geminiTask, requestInputsTask, responseTask };
+// `cropImageTask` / `geminiTask` were deleted in favour of `nodeRunnerTask`
+// which dispatches to runCropImage / runGemini worker functions internally.
+// `requestInputsTask` / `responseTask` are no longer scheduled (the
+// orchestrator inlines those nodes), so they don't need re-exporting.
+export { nodeRunnerTask };
