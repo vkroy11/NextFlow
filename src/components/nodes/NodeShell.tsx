@@ -70,11 +70,16 @@ export function NodeShell({
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen]);
 
-  // While ANY workflow run is in flight (full or single-node), every per-node
-  // Run button is disabled — prevents kicking off competing runs from
-  // different cards while the current one is still resolving.
+  // Two related but distinct concerns:
+  //   - `nodeIsRunning` drives the pulsate animation. ONLY the node whose
+  //     task is currently executing should pulsate — running an isolated
+  //     node shouldn't make every other card on the canvas throb too.
+  //   - `runDisabled` guards the per-node Run button so users can't kick
+  //     off competing runs from different cards while any run is still
+  //     resolving (full-flow or single-node).
   const { isRunning: globalRunning } = useWorkflowRun();
-  const isRunning = runStatus === "running" || globalRunning;
+  const nodeIsRunning = runStatus === "running";
+  const runDisabled = nodeIsRunning || globalRunning;
 
   return (
     <div
@@ -84,7 +89,7 @@ export function NodeShell({
         selected
           ? "border-gray-200 ring-2 ring-workflow-accent-500"
           : "border-gray-200",
-        isRunning && "nf-running",
+        nodeIsRunning && "nf-running",
         runStatus === "success" && "border-green-400/60",
         runStatus === "failed" && "border-red-400/60",
       )}
@@ -118,10 +123,12 @@ export function NodeShell({
                 </button>
                 <button
                   onClick={onRun}
-                  disabled={isRunning}
+                  disabled={runDisabled}
                   className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium text-green-600 transition-all hover:bg-green-500/30 disabled:opacity-60"
                 >
-                  {isRunning ? (
+                  {/* Spinner only on the node actively executing — every
+                   *  other card just stays disabled but visually idle. */}
+                  {nodeIsRunning ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <Play className="h-3 w-3 fill-current" />

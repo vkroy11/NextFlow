@@ -300,6 +300,12 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: "removable", animated: true }}
+        // ReactFlow's defaults clamp zoom to [0.5, 2]. Big workflows that
+        // span 5–7 nodes horizontally can't fit in viewport at 0.5×, so
+        // open up the lower bound to 0.15 (the toolbar percentage and the
+        // pinch-zoom gesture both honour this).
+        minZoom={0.15}
+        maxZoom={2}
         fitView
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={null}
