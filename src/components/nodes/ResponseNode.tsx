@@ -5,6 +5,7 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import { Download, FileOutput, Info, Loader2, Pencil, Trash2 } from "lucide-react";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { HANDLE_COLOR, colorForHandle } from "@/lib/handleColors";
+import { CopyButton } from "@/components/CopyButton";
 import { cn } from "@/lib/utils";
 
 type Data = {
@@ -193,6 +194,7 @@ function ResultCard({
         )}
         {!renaming && (
           <>
+            <CopyButton text={row.result} label="Copy response" />
             <button
               onClick={onStartRename}
               title="Rename"

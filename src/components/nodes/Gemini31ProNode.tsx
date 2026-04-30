@@ -26,6 +26,7 @@ import {
   resolveConnectedValue,
 } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
+import { CopyButton } from "@/components/CopyButton";
 import { useWorkflowRun } from "../canvas/RunContext";
 import { cn } from "@/lib/utils";
 
@@ -298,8 +299,18 @@ export function Gemini31ProNode({ id, data, selected }: NodeProps<Data>) {
               boxShadow: `${colorForHandle("response")}50 0 0 8px`,
             }}
           />
-          <div className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-gray-100 bg-[#FAFAFA] p-3 text-[12px] leading-relaxed text-gray-700">
-            {data?.response ?? <span className="text-gray-400">No output yet</span>}
+          <div className="relative mt-1.5">
+            <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-gray-100 bg-[#FAFAFA] p-3 pr-9 text-[12px] leading-relaxed text-gray-700">
+              {data?.response ?? <span className="text-gray-400">No output yet</span>}
+            </div>
+            {/* Copy floats over the top-right of the response box. The pr-9
+             *  on the inner div above reserves space so long lines don't
+             *  slide under the icon. */}
+            <CopyButton
+              text={data?.response ?? null}
+              label="Copy response"
+              className="absolute right-1.5 top-1.5 bg-white/80 backdrop-blur-sm"
+            />
           </div>
         </div>
 
