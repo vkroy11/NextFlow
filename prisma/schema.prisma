@@ -1,7 +1,8 @@
-// NextFlow data model. Postgres (Neon) for both dev and prod — Vercel serverless
-// runtime has no persistent fs, so SQLite is not viable.
+// NextFlow data model. Prisma Postgres (Prisma's own managed Postgres,
+// installed via the Vercel Marketplace integration) for both dev and prod —
+// Vercel's serverless runtime has no persistent fs, so SQLite is not viable.
 //
-// Vercel's Prisma-Postgres integration injects:
+// The Prisma-Postgres marketplace integration injects two URLs on Vercel:
 //   PRISMA_DATABASE_URL — pooled (Accelerate) URL, used at runtime
 //   POSTGRES_URL        — direct, non-pooled URL, used for migrations
 generator client {

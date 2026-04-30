@@ -27,7 +27,7 @@ Drag nodes onto a React Flow canvas, wire them together, click Run, and watch a 
 | --- | --- |
 | Framework | Next.js 16 (App Router, RSC, Turbopack) |
 | Language | TypeScript (strict) |
-| Database | PostgreSQL on Neon (via Vercel Marketplace) |
+| Database | Prisma Postgres (via Vercel Marketplace) |
 | ORM | Prisma 6 |
 | Auth | Clerk (production instance with custom domain) |
 | Canvas | React Flow 11 + Zustand 5 |
@@ -67,7 +67,7 @@ Drag nodes onto a React Flow canvas, wire them together, click Run, and watch a 
        │                                                     │
        │     reads NodeRun rows                              ▼
        │   ◄───────────────────────────────────  ┌──────────────────────┐
-       └──────────────────────────────────────── │  Postgres (Neon)     │
+       └──────────────────────────────────────── │  Prisma Postgres     │
                                                  │  WorkflowRun, NodeRun│
                                                  └──────────────────────┘
 
@@ -88,7 +88,7 @@ Long-form deep dive: [`docs/dag-concurrency.md`](./docs/dag-concurrency.md). Pro
 ### Prerequisites
 
 - Node 20+ (Vercel deploys on 22; both work locally).
-- A Postgres URL — either Neon's free tier or a local Postgres instance. The schema expects two URLs (pooled + direct); local Postgres can use the same string for both.
+- A Postgres URL — either a Prisma Postgres database (free tier via the Vercel Marketplace integration is plenty for dev) or a local Postgres instance. The schema expects two URLs (pooled + direct); a local Postgres can use the same string for both.
 - Clerk dev instance (publishable + secret keys).
 - Trigger.dev account + project ref.
 - Google AI Studio API key.
@@ -107,9 +107,9 @@ npm install                       # postinstall runs `prisma generate`
 Copy `.env.example` to `.env.local` and fill in:
 
 ```ini
-# ─── Database (Neon Postgres or local) ─────────────────────────────────────
-PRISMA_DATABASE_URL=postgresql://…?sslmode=require   # pooled / runtime
-POSTGRES_URL=postgresql://…                           # direct / migrations
+# ─── Database (Prisma Postgres via Vercel, or local) ──────────────────────
+PRISMA_DATABASE_URL=prisma+postgres://…              # pooled / runtime (Accelerate)
+POSTGRES_URL=postgresql://…                          # direct / migrations
 
 # ─── Clerk auth ────────────────────────────────────────────────────────────
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…
@@ -203,13 +203,13 @@ trigger.config.ts             Trigger.dev build config (prismaExtension)
 
 ## Deploying
 
-[`DEPLOYMENT.md`](./DEPLOYMENT.md) is the click-by-click runbook — Vercel project setup, the two URLs Neon injects, Clerk production keys, separate `npm run trigger:deploy`, sharp / Transloadit constraints, common foot-guns. The short version:
+[`DEPLOYMENT.md`](./DEPLOYMENT.md) is the click-by-click runbook — Vercel project setup, the two URLs Prisma Postgres injects, Clerk production keys, separate `npm run trigger:deploy`, Transloadit constraints, common foot-guns. The short version:
 
 ```bash
 # 1. Trigger.dev cloud (do this BEFORE Vercel — otherwise the first run 404s)
 npm run trigger:deploy
 
-# 2. Provision Neon via Vercel Marketplace + run migrations
+# 2. Provision Prisma Postgres via Vercel Marketplace + run migrations
 npx prisma migrate deploy
 
 # 3. Push to main; Vercel auto-builds
