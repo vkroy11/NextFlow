@@ -1,0 +1,48 @@
+{
+  "configPath": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-aQi5cS/Full stack/NextFlow/trigger.config.mjs",
+  "customConditions": [
+  ],
+  "prompts": [
+  ],
+  "queues": [
+  ],
+  "runtime": "node",
+  "runtimeVersion": "24.15.0",
+  "tasks": [
+    {
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-aQi5cS/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
+      "filePath": "src/trigger/runWorkflow.ts",
+      "id": "node-runner",
+      "maxDuration": 90,
+      "retry": {
+        "factor": 2,
+        "maxAttempts": 1,
+        "maxTimeoutInMs": 60000,
+        "minTimeoutInMs": 1000,
+        "randomize": true
+      }
+    },
+    {
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-aQi5cS/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
+      "filePath": "src/trigger/runWorkflow.ts",
+      "id": "run-workflow",
+      "maxDuration": 600,
+      "retry": {
+        "factor": 1,
+        "maxAttempts": 1,
+        "maxTimeoutInMs": 1000,
+        "minTimeoutInMs": 1000,
+        "randomize": false
+      }
+    }
+  ],
+  "timings": {
+    "src/trigger/cropImage.ts": 3.7160410000000184,
+    "src/trigger/dagDispatch.ts": 0.4818750000000023,
+    "src/trigger/gemini.ts": 0.24858400000005076,
+    "src/trigger/inlineNodes.ts": 0.3128340000000094,
+    "src/trigger/nodeRunner.ts": 0.37545900000003485,
+    "src/trigger/runWorkflow.ts": 151.735667
+  },
+  "workerEntryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-aQi5cS/.npm/_npx/f51a09bd0abf5f10/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs"
+}

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 
 export type CropPayload = {
   workflowRunId: string;
+  nodeRunId: string;
   nodeId: string;
   inputUrl: string;
   x: number;
@@ -21,25 +22,31 @@ export type CropOutput = { url: string };
 const ARTIFICIAL_DELAY_MS = 30_000;
 
 /**
- * Worker function (not a Trigger task) that performs the crop and writes the
- * NodeRun row. Invoked from the `node-runner` task so cross-type DAG-level
- * batches (e.g. {crop1, crop2, gemini1}) can fan out concurrently via a
- * single `batchTriggerAndWait` call without violating Trigger.dev v4's
- * one-pending-wait rule.
+ * Worker function (not a Trigger task). Updates the pre-created NodeRun
+ * row instead of creating it: the orchestrator now pre-creates every
+ * executable node's row in QUEUED status during setup so the History
+ * sidebar can show upcoming work, and the recursive dispatcher can claim
+ * each row atomically (CAS QUEUED → RUNNING) before triggering the
+ * worker.
  *
- * NodeRun bookkeeping stays in here so our History sidebar (which reads the
- * `NodeRun` table) shows `cropImage` rows — never `node-runner` rows.
+ * The NodeRun row's status is already RUNNING when this function is
+ * called (the dispatcher's `tryClaimNodeRun` set it). We re-stamp
+ * `startedAt` so node duration reflects real worker start time, not
+ * the queue-claim time.
  */
 export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
   const startedAt = new Date();
-  const nodeRun = await prisma.nodeRun.create({
+  await prisma.nodeRun.update({
+    where: { id: payload.nodeRunId },
     data: {
-      workflowRunId: payload.workflowRunId,
-      nodeId: payload.nodeId,
-      nodeType: "cropImage",
-      status: "RUNNING",
       startedAt,
-      input: { x: payload.x, y: payload.y, w: payload.w, h: payload.h, inputUrl: payload.inputUrl },
+      input: {
+        x: payload.x,
+        y: payload.y,
+        w: payload.w,
+        h: payload.h,
+        inputUrl: payload.inputUrl,
+      },
     },
   });
 
@@ -57,7 +64,7 @@ export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({
-      where: { id: nodeRun.id },
+      where: { id: payload.nodeRunId },
       data: {
         status: "SUCCESS",
         finishedAt,
@@ -69,7 +76,7 @@ export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.nodeRun.update({
-      where: { id: nodeRun.id },
+      where: { id: payload.nodeRunId },
       data: { status: "FAILED", finishedAt: new Date(), error: message },
     });
     throw err;
