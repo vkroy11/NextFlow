@@ -1,0 +1,277 @@
+{
+  "name": "Sample workflo",
+  "nodes": [
+    {
+      "id": "request-inputs-1",
+      "data": {
+        "fields": [
+          {
+            "key": "text_field_2",
+            "type": "text",
+            "label": "text_field_2",
+            "value": "Product: Wireless Bluetooth Headphones. Features: Noise cancellation, 30-hour battery, foldable design."
+          },
+          {
+            "key": "image_field",
+            "type": "image",
+            "label": "image_field",
+            "value": null
+          }
+        ]
+      },
+      "type": "requestInputs",
+      "width": 380,
+      "height": 273,
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "selected": false,
+      "deletable": false
+    },
+    {
+      "id": "response-1",
+      "data": {
+        "result": "Escape the noise. 🎧 Immerse yourself in crystal-clear sound with our Premium Wireless Headphones! Featuring advanced noise-cancellation, a 30-hour battery life, & a sleek foldable design. The ultimate on-the-go travel companion. ✈️🎶\n\n<div style=\"display: flex; gap: 10px;\">\n  <img src=\"https://storage.googleapis.com/gweb-cloudblog-publish/images/3._crop_1.max-200x200.jpg\" alt=\"Headphone detail showing hinge and logo\" style=\"max-width: 50%;\">\n  <img src=\"https://storage.googleapis.com/gweb-cloudblog-publish/images/4._crop_2.max-200x200.jpg\" alt=\"Headphone detail showing earcup\" style=\"max-width: 50%;\">\n</div>",
+        "results": {
+          "reactflow__edge-gemini-cab2ef9cresponse-response-1result": "Escape the noise. 🎧 Immerse yourself in crystal-clear sound with our Premium Wireless Headphones! Featuring advanced noise-cancellation, a 30-hour battery life, & a sleek foldable design. The ultimate on-the-go travel companion. ✈️🎶\n\n<div style=\"display: flex; gap: 10px;\">\n  <img src=\"https://storage.googleapis.com/gweb-cloudblog-publish/images/3._crop_1.max-200x200.jpg\" alt=\"Headphone detail showing hinge and logo\" style=\"max-width: 50%;\">\n  <img src=\"https://storage.googleapis.com/gweb-cloudblog-publish/images/4._crop_2.max-200x200.jpg\" alt=\"Headphone detail showing earcup\" style=\"max-width: 50%;\">\n</div>"
+        }
+      },
+      "type": "response",
+      "width": 380,
+      "height": 495,
+      "dragging": false,
+      "position": {
+        "x": 2116,
+        "y": 270
+      },
+      "selected": true,
+      "positionAbsolute": {
+        "x": 2116,
+        "y": 270
+      },
+      "deletable": false
+    },
+    {
+      "id": "cropImage-1d977242",
+      "data": {
+        "h": 86,
+        "w": 65,
+        "x": 14,
+        "y": 12,
+        "outputUrl": "https://pub-6d24529af5b6438f895cf5350a9bd511.r2.dev/3145d9ec59b74796a87f4a3e147145ae/7bb39ac6fce84a2f8fb4f4dcfe0dc3ca/80b6aa90834748698e5d9654cc839ccf.jpg"
+      },
+      "type": "cropImage",
+      "width": 380,
+      "height": 562,
+      "dragging": false,
+      "position": {
+        "x": 434,
+        "y": -120
+      },
+      "selected": false,
+      "positionAbsolute": {
+        "x": 434,
+        "y": -120
+      }
+    },
+    {
+      "id": "cropImage-b026351c",
+      "data": {
+        "h": 57,
+        "w": 100,
+        "x": 0,
+        "y": 20,
+        "outputUrl": "https://pub-6d24529af5b6438f895cf5350a9bd511.r2.dev/3145d9ec59b74796a87f4a3e147145ae/8648975233ee41728ece6718444c5aa0/ac5e900851f045fbaa2f8554cb062111.jpg"
+      },
+      "type": "cropImage",
+      "width": 380,
+      "height": 562,
+      "dragging": false,
+      "position": {
+        "x": 430,
+        "y": 822
+      },
+      "selected": false,
+      "positionAbsolute": {
+        "x": 430,
+        "y": 822
+      }
+    },
+    {
+      "id": "gemini-15c556ee",
+      "data": {
+        "model": "gemini-3.1-pro",
+        "prompt": "",
+        "response": "Immerse yourself in pure, uninterrupted sound with our premium Wireless Bluetooth Headphones, designed to elevate your everyday listening experience. Engineered with advanced noise-cancellation technology, these headphones instantly melt away background chatter and city noise, letting you focus entirely on your favorite playlists and podcasts in crystal-clear detail. Whether you're conquering a cross-country flight or powering through a busy workday, the impressive 30-hour battery life ensures your soundtrack never fades. When you're finally ready to unplug, the sleek, foldable design stashes effortlessly into your bag, making them the ultimate, space-saving travel companion for audiophiles on the go.",
+        "temperature": 0.7,
+        "systemPrompt": "You are a marketing copywriter. Write a one-paragraph product description."
+      },
+      "type": "gemini",
+      "width": 380,
+      "height": 818,
+      "dragging": false,
+      "position": {
+        "x": 910.4336758039133,
+        "y": -52.58833716215145
+      },
+      "selected": false,
+      "positionAbsolute": {
+        "x": 910.4336758039133,
+        "y": -52.58833716215145
+      }
+    },
+    {
+      "id": "gemini-5923c2ca",
+      "data": {
+        "model": "gemini-3.1-pro",
+        "prompt": "",
+        "response": "Escape the noise. 🎧 Immerse yourself in crystal-clear sound with our Premium Wireless Headphones! Featuring advanced noise-cancellation, a 30-hour battery life, & a sleek foldable design. The ultimate on-the-go travel companion. ✈️🎶",
+        "temperature": 0.7,
+        "systemPrompt": "Condense the following product description into a tweet-length hook (under 240\ncharacters)."
+      },
+      "type": "gemini",
+      "width": 380,
+      "height": 781,
+      "dragging": false,
+      "position": {
+        "x": 1034.433675803913,
+        "y": 809.4116628378486
+      },
+      "selected": false,
+      "positionAbsolute": {
+        "x": 1034.433675803913,
+        "y": 809.4116628378486
+      }
+    },
+    {
+      "id": "gemini-cab2ef9c",
+      "data": {
+        "model": "gemini-3.1-pro",
+        "prompt": "",
+        "response": "Escape the noise. 🎧 Immerse yourself in crystal-clear sound with our Premium Wireless Headphones! Featuring advanced noise-cancellation, a 30-hour battery life, & a sleek foldable design. The ultimate on-the-go travel companion. ✈️🎶\n\n<div style=\"display: flex; gap: 10px;\">\n  <img src=\"https://storage.googleapis.com/gweb-cloudblog-publish/images/3._crop_1.max-200x200.jpg\" alt=\"Headphone detail showing hinge and logo\" style=\"max-width: 50%;\">\n  <img src=\"https://storage.googleapis.com/gweb-cloudblog-publish/images/4._crop_2.max-200x200.jpg\" alt=\"Headphone detail showing earcup\" style=\"max-width: 50%;\">\n</div>",
+        "temperature": 0.7,
+        "systemPrompt": "You are a social media manager.\nCombine the tweet hook and the two product crops into a final marketing post."
+      },
+      "type": "gemini",
+      "width": 380,
+      "height": 890,
+      "dragging": false,
+      "position": {
+        "x": 1512.433675803913,
+        "y": 633.4116628378486
+      },
+      "selected": false,
+      "positionAbsolute": {
+        "x": 1512.433675803913,
+        "y": 633.4116628378486
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "reactflow__edge-request-inputs-1image_field-cropImage-1d977242input",
+      "type": "removable",
+      "style": {
+        "stroke": "#06b6d4",
+        "strokeWidth": 2
+      },
+      "source": "request-inputs-1",
+      "target": "cropImage-1d977242",
+      "animated": true,
+      "sourceHandle": "image_field",
+      "targetHandle": "input"
+    },
+    {
+      "id": "reactflow__edge-request-inputs-1image_field-cropImage-b026351cinput",
+      "type": "removable",
+      "style": {
+        "stroke": "#06b6d4",
+        "strokeWidth": 2
+      },
+      "source": "request-inputs-1",
+      "target": "cropImage-b026351c",
+      "animated": true,
+      "sourceHandle": "image_field",
+      "targetHandle": "input"
+    },
+    {
+      "id": "reactflow__edge-request-inputs-1text_field_2-gemini-15c556eeprompt",
+      "type": "removable",
+      "style": {
+        "stroke": "#f59e0b",
+        "strokeWidth": 2
+      },
+      "source": "request-inputs-1",
+      "target": "gemini-15c556ee",
+      "animated": true,
+      "sourceHandle": "text_field_2",
+      "targetHandle": "prompt"
+    },
+    {
+      "id": "reactflow__edge-gemini-15c556eeresponse-gemini-5923c2caprompt",
+      "type": "removable",
+      "style": {
+        "stroke": "#f59e0b",
+        "strokeWidth": 2
+      },
+      "source": "gemini-15c556ee",
+      "target": "gemini-5923c2ca",
+      "animated": true,
+      "sourceHandle": "response",
+      "targetHandle": "prompt"
+    },
+    {
+      "id": "reactflow__edge-gemini-5923c2caresponse-gemini-cab2ef9cprompt",
+      "type": "removable",
+      "style": {
+        "stroke": "#f59e0b",
+        "strokeWidth": 2
+      },
+      "source": "gemini-5923c2ca",
+      "target": "gemini-cab2ef9c",
+      "animated": true,
+      "sourceHandle": "response",
+      "targetHandle": "prompt"
+    },
+    {
+      "id": "reactflow__edge-cropImage-b026351coutput-gemini-cab2ef9cvision",
+      "type": "removable",
+      "style": {
+        "stroke": "#06b6d4",
+        "strokeWidth": 2
+      },
+      "source": "cropImage-b026351c",
+      "target": "gemini-cab2ef9c",
+      "animated": true,
+      "sourceHandle": "output",
+      "targetHandle": "vision"
+    },
+    {
+      "id": "reactflow__edge-cropImage-1d977242output-gemini-cab2ef9cvision",
+      "type": "removable",
+      "style": {
+        "stroke": "#06b6d4",
+        "strokeWidth": 2
+      },
+      "source": "cropImage-1d977242",
+      "target": "gemini-cab2ef9c",
+      "animated": true,
+      "sourceHandle": "output",
+      "targetHandle": "vision"
+    },
+    {
+      "id": "reactflow__edge-gemini-cab2ef9cresponse-response-1result",
+      "type": "removable",
+      "style": {
+        "stroke": "#f59e0b",
+        "strokeWidth": 2
+      },
+      "source": "gemini-cab2ef9c",
+      "target": "response-1",
+      "animated": true,
+      "sourceHandle": "response",
+      "targetHandle": "result"
+    }
+  ]
+}
