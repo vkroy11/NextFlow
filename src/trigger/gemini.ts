@@ -1,4 +1,5 @@
-import { callGemini } from "@/lib/gemini";
+import { streams } from "@trigger.dev/sdk/v3";
+import { streamGeminiText } from "@/lib/gemini";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { rethrowClassified } from "@/lib/triggerErrors";
@@ -57,13 +58,22 @@ export async function runGemini(payload: GeminiPayload): Promise<GeminiOutput> {
   });
 
   try {
-    const text = await callGemini({
+    // Stream Gemini chunks through Trigger.dev Realtime. The browser
+    // subscribes via useRealtimeRunWithStreams and renders chunks as
+    // they arrive, so the user sees the response materialise live
+    // instead of waiting for the full text to land in NodeRun.output.
+    const chunkSource = streamGeminiText({
       model: payload.model,
       prompt: payload.prompt,
       systemPrompt: payload.systemPrompt,
       imageUrls: payload.imageUrls,
       temperature: payload.temperature,
     });
+    const { stream, waitUntilComplete } = streams.pipe("gemini", chunkSource);
+
+    let text = "";
+    for await (const chunk of stream) text += chunk;
+    await waitUntilComplete();
     const finishedAt = new Date();
     await prisma.nodeRun.update({
       where: { id: payload.nodeRunId },

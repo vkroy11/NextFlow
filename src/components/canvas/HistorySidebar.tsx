@@ -16,6 +16,8 @@ import { useRealtimeRunsWithTag } from "@trigger.dev/react-hooks";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/relativeTime";
 import { CopyButton } from "@/components/CopyButton";
+import { TypewriterText } from "@/components/TypewriterText";
+import { useWorkflowStore } from "@/store/useWorkflowStore";
 
 type NodeRun = {
   id: string;
@@ -239,15 +241,25 @@ function showOutputSection(nodeType: string): boolean {
 
 function NodeRunRow({ run, label }: { run: NodeRun; label: string }) {
   const [open, setOpen] = useState(false);
+  // While a Gemini run is streaming, GeminiStreamCoordinator keeps the
+  // accumulated text on the store keyed by canvas nodeId. Surface it
+  // in the sidebar's Output panel so the History view animates the
+  // response live too, not just the Gemini node body.
+  const liveStream = useWorkflowStore((s) =>
+    run.nodeType === "gemini" ? s.streamingText[run.nodeId] : undefined,
+  );
   const hasDetail =
-    run.input !== null || run.output !== null || run.error !== null || run.startedAt !== null;
+    run.input !== null || run.output !== null || run.error !== null || run.startedAt !== null ||
+    (liveStream !== undefined && liveStream.length > 0);
   const tone = statusTone(run.status);
 
   const showInput = showInputSection(run.nodeType);
   const showOutput = showOutputSection(run.nodeType);
   const responseOuts = run.nodeType === "response" ? responseOutputs(run.output) : [];
-  const copyValue =
+  const persistedCopy =
     run.nodeType === "response" ? null : primaryCopyValue(run.nodeType, run.output);
+  const copyValue =
+    liveStream && liveStream.length > 0 ? liveStream : persistedCopy;
 
   return (
     <li className="rounded-md border border-gray-100 bg-white">
@@ -349,12 +361,12 @@ function NodeRunRow({ run, label }: { run: NodeRun; label: string }) {
             <div>
               <div className="mb-1 flex items-center justify-between gap-2">
                 <div className="text-[10.5px] font-semibold uppercase tracking-wide text-gray-500">
-                  Output
+                  Output{liveStream && liveStream.length > 0 ? " · streaming" : ""}
                 </div>
                 <CopyButton text={copyValue} label="Copy output" size={12} />
               </div>
               <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-2 font-mono text-[10.5px] leading-relaxed text-gray-700">
-                {copyValue ?? prettyJson(run.output)}
+                {copyValue !== null ? <TypewriterText text={copyValue} /> : prettyJson(run.output)}
               </pre>
             </div>
           )}

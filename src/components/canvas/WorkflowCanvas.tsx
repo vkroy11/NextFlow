@@ -47,6 +47,7 @@ import { HistorySidebar } from "./HistorySidebar";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { ShortcutsModal } from "./ShortcutsModal";
 import { ToastBar } from "./ToastBar";
+import { GeminiStreamCoordinator } from "./GeminiStreamCoordinator";
 
 const nodeTypes = {
   requestInputs: RequestInputsNode,
@@ -97,6 +98,8 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
     setEdges,
     setRunStatus,
     setCurrentRunId,
+    resetStreamingText,
+    currentRunId,
     updateNodeData,
     addNode,
   } = useWorkflowStore();
@@ -261,6 +264,9 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
       if (running) return;
       setRunning(true);
       setHistoryOpen(true);
+      // Clear any previous run's streamed text so partially-rendered
+      // chunks don't ghost a fresh run.
+      resetStreamingText();
       try {
         const res = await fetch(`/api/workflows/${initial.id}/run`, {
           method: "POST",
@@ -286,11 +292,12 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
         setRunning(false);
       }
     },
-    [initial.id, pollRun, running, setCurrentRunId],
+    [initial.id, pollRun, running, setCurrentRunId, resetStreamingText],
   );
 
   return (
     <WorkflowRunProvider value={{ triggerRun, isRunning: running }}>
+    {currentRunId && running ? <GeminiStreamCoordinator workflowRunId={currentRunId} /> : null}
     <div style={{ height: "calc(100vh - 3.5rem)", width: "100%" }} className="relative">
       <ReactFlow
         nodes={nodes}

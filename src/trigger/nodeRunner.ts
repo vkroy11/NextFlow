@@ -33,11 +33,19 @@ export function buildNodeRunnerTags(args: {
   workflowId: string;
   workflowRunId: string;
   nodeRunId: string;
+  // Canvas (React Flow) node id and node type are also tagged so the
+  // browser's `GeminiStreamCoordinator` can pick the right run out of a
+  // `useRealtimeRunsWithTag('wfrun:<id>')` subscription and key its
+  // streamed text by canvas nodeId without an extra DB lookup.
+  nodeId: string;
+  nodeType: string;
 }): string[] {
   return [
     `workflow:${args.workflowId}`,
     `wfrun:${args.workflowRunId}`,
     `node:${args.nodeRunId}`,
+    `nodeId:${args.nodeId}`,
+    `kind:${args.nodeType}`,
   ];
 }
 
@@ -237,6 +245,7 @@ export const nodeRunnerTask = task({
           workflowRunId,
           nodeRunId: childNodeRunId,
           nodeId: childNodeId,
+          nodeType: graph.byId.get(childNodeId)?.type ?? "unknown",
         }),
       });
       logger.info("node-runner success", { workflowRunId, nodeId });
@@ -281,12 +290,15 @@ export function buildChildTriggerOptions(args: {
   workflowRunId: string;
   nodeRunId: string;
   nodeId: string;
+  nodeType: string;
 }): ChildTriggerOptions {
   return {
     tags: buildNodeRunnerTags({
       workflowId: args.workflowId,
       workflowRunId: args.workflowRunId,
       nodeRunId: args.nodeRunId,
+      nodeId: args.nodeId,
+      nodeType: args.nodeType,
     }),
     idempotencyKey: buildNodeRunnerIdempotencyKey({
       workflowRunId: args.workflowRunId,

@@ -31,7 +31,7 @@ const MODEL_ALIASES: Record<string, string> = {
   "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
 };
 
-export async function callGemini(input: GeminiCallInput): Promise<string> {
+async function buildModelAndParts(input: GeminiCallInput) {
   const requestedModel = input.model || "gemini-2.5-pro";
   const actualModel = MODEL_ALIASES[requestedModel] ?? requestedModel;
   const model = gemini().getGenerativeModel({
@@ -54,7 +54,26 @@ export async function callGemini(input: GeminiCallInput): Promise<string> {
       });
     }
   }
+  return { model, parts };
+}
 
-  const result = await model.generateContent({ contents: [{ role: "user", parts }] });
-  return result.response.text();
+/**
+ * Streams text chunks from Gemini's `generateContentStream` API. Each
+ * yielded chunk is the incremental text fragment Gemini produced — fine
+ * to forward straight to a Trigger.dev Realtime stream so the browser
+ * can render the response token-by-token.
+ */
+export async function* streamGeminiText(input: GeminiCallInput): AsyncGenerator<string, void, void> {
+  const { model, parts } = await buildModelAndParts(input);
+  const result = await model.generateContentStream({ contents: [{ role: "user", parts }] });
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) yield text;
+  }
+}
+
+export async function callGemini(input: GeminiCallInput): Promise<string> {
+  let full = "";
+  for await (const chunk of streamGeminiText(input)) full += chunk;
+  return full;
 }

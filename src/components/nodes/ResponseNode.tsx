@@ -6,6 +6,7 @@ import { Download, FileOutput, Info, Loader2, Pencil, Trash2 } from "lucide-reac
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { HANDLE_COLOR, colorForHandle } from "@/lib/handleColors";
 import { CopyButton } from "@/components/CopyButton";
+import { TypewriterText } from "@/components/TypewriterText";
 import { cn } from "@/lib/utils";
 
 type Data = {
@@ -31,6 +32,11 @@ export function ResponseNode({ id, data, selected }: NodeProps<Data>) {
   // return a freshly-allocated array from the selector on every store snapshot.
   const edges = useWorkflowStore((s) => s.edges);
   const allNodes = useWorkflowStore((s) => s.nodes);
+  // Live LLM stream chunks keyed by canvas nodeId, written by
+  // GeminiStreamCoordinator while a gemini node-runner is streaming.
+  // For gemini-source rows we prefer this over the persisted result so
+  // the Response card animates the response in real time.
+  const streamingText = useWorkflowStore((s) => s.streamingText);
 
   const rows = useMemo(() => {
     return edges
@@ -49,7 +55,10 @@ export function ResponseNode({ id, data, selected }: NodeProps<Data>) {
         // edge shows the existing crop / gemini / input value immediately
         // instead of "No output yet" until the next run.
         const perEdgeResult = data?.results?.[edge.id];
+        const liveStream =
+          sourceNode.type === "gemini" ? streamingText[sourceNode.id] : undefined;
         const result =
+          (liveStream && liveStream.length > 0 ? liveStream : null) ??
           (perEdgeResult ?? null) ??
           deriveUpstreamResult(sourceNode, edge.sourceHandle ?? null);
         return {
@@ -69,7 +78,7 @@ export function ResponseNode({ id, data, selected }: NodeProps<Data>) {
         result: string | null;
         sourceType: string;
       } => Boolean(r));
-  }, [edges, allNodes, id, data?.labels, data?.results]);
+  }, [edges, allNodes, id, data?.labels, data?.results, streamingText]);
 
   const [renamingEdgeId, setRenamingEdgeId] = useState<string | null>(null);
 
@@ -227,7 +236,9 @@ function ResultCard({
           <ImageResultPreview url={row.result} filename={`${row.label || row.autoLabel}.jpg`} />
         ) : (
           <div className="flex min-h-[48px] items-center justify-center rounded border border-dashed border-gray-200 bg-white p-3 text-[12px] text-gray-500">
-            <span className="block w-full whitespace-pre-wrap break-words text-left">{row.result}</span>
+            <span className="block w-full whitespace-pre-wrap break-words text-left">
+              <TypewriterText text={row.result} />
+            </span>
           </div>
         )
       ) : (

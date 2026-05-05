@@ -182,11 +182,19 @@ export const runWorkflowTask = task({
       // Tags + idempotency key are shared with the dispatcher's cascade
       // (see `buildChildTriggerOptions` in `nodeRunner.ts`) so root and
       // descendant triggers wear identical metadata. Frontend Realtime
-      // subscribes via `wfrun:<id>`; idempotency-key shape is
+      // subscribes via `wfrun:<id>`; the `nodeId:<canvasId>` and
+      // `kind:<type>` tags let `GeminiStreamCoordinator` pick gemini
+      // runs out of that subscription. Idempotency-key shape is
       // `wfrun-<id>-node-<nodeId>` and dedups any redundant scheduling.
       await nodeRunnerTask.trigger(
         triggerPayload,
-        buildChildTriggerOptions({ workflowId, workflowRunId, nodeRunId, nodeId }),
+        buildChildTriggerOptions({
+          workflowId,
+          workflowRunId,
+          nodeRunId,
+          nodeId,
+          nodeType: graph.byId.get(nodeId)?.type ?? "unknown",
+        }),
       );
     }
 

@@ -20,6 +20,9 @@ CLAUDE.md
 /.next/
 /out/
 
+# trigger.dev local build artifacts
+/.trigger/
+
 # production
 /build
 
