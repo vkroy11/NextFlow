@@ -216,18 +216,17 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
     [setNodes, setEdges, setWorkflowName],
   );
 
-  // Slow output-fetching loop. The canvas glow / `runStatus` is now
-  // driven primarily by `RealtimeCoordinator` over SSE; this loop's
-  // job is narrower:
-  //   - Read each NodeRun's persisted `output` once it succeeds and
-  //     write it onto canvas state via `updateNodeData` (Gemini
-  //     `response`, Response `result`/`results`, Crop `outputUrl`).
-  //   - Detect terminal `WorkflowRun.status` and flip `setRunning(false)`.
-  // It also still calls `setRunStatus(map)` as a true fallback for the
-  // glow if the realtime token mint or SSE stream failed — in that
-  // case this is the only thing keeping the canvas live. Cadence is
-  // 5 s instead of the original 2 s because realtime is the primary
-  // path.
+  // True fallback path. Only invoked from `triggerRun` when the
+  // public-access token mint failed (i.e., realtime is not available
+  // for this run). When realtime is available, `RealtimeCoordinator`
+  // owns all three jobs this loop performs:
+  //   - canvas pulse via `setRunStatus`
+  //   - reading each NodeRun's persisted output (`response`,
+  //     `outputUrl`, `result`/`results`) onto canvas state
+  //   - detecting `WorkflowRun.status` terminal → `setRunning(false)`
+  //
+  // Cadence is 5 s. This is the only place in the active-run UX that
+  // still polls.
   const pollRun = useCallback(
     async (runId: string) => {
       const seenOutputs = new Set<string>();
@@ -299,7 +298,14 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
         setRealtimeTag(json.realtimeTag ?? null);
         setPublicAccessToken(json.publicAccessToken ?? null);
         setHistoryKey((k) => k + 1);
-        pollRun(json.runId);
+        // Only fall back to polling if the realtime token mint failed.
+        // When the token is present, `RealtimeCoordinator` drives the
+        // canvas glow, reads `run.output` for node outputs, and fires
+        // `onWorkflowComplete` for terminal detection — no polling
+        // happens at all in the happy path.
+        if (!json.publicAccessToken) {
+          pollRun(json.runId);
+        }
       } catch {
         setRunning(false);
       }
@@ -307,9 +313,22 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
     [initial.id, pollRun, running, setCurrentRunId, resetStreamingText],
   );
 
+  // Fired by `RealtimeCoordinator` once the orchestrator has COMPLETED
+  // and every node-runner reaches a terminal Trigger status. Replaces
+  // `pollRun`'s old terminal-detection job in the realtime happy path.
+  const handleWorkflowComplete = useCallback(() => {
+    setRunning(false);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
   return (
     <WorkflowRunProvider value={{ triggerRun, isRunning: running }}>
-    {currentRunId && running ? <RealtimeCoordinator workflowRunId={currentRunId} /> : null}
+    {currentRunId && running ? (
+      <RealtimeCoordinator
+        workflowRunId={currentRunId}
+        onWorkflowComplete={handleWorkflowComplete}
+      />
+    ) : null}
     <div style={{ height: "calc(100vh - 3.5rem)", width: "100%" }} className="relative">
       <ReactFlow
         nodes={nodes}

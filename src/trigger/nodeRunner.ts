@@ -189,7 +189,7 @@ export const nodeRunnerTask = task({
     // helper means racing finalisers safely no-op.
     await tryFinaliseWorkflowRun(payload.workflowRunId);
   },
-  run: async (payload: NodeRunnerPayload): Promise<void> => {
+  run: async (payload: NodeRunnerPayload): Promise<unknown> => {
     const { workflowRunId, workflowId, nodeRunId, nodeId } = payload;
     logger.info("node-runner start", { workflowRunId, nodeId, nodeRunId });
 
@@ -219,8 +219,9 @@ export const nodeRunnerTask = task({
       return;
     }
 
+    let workerOutput: unknown;
     try {
-      await executeWorker({
+      workerOutput = await executeWorker({
         node,
         edges: graph.edges,
         nodeRunId,
@@ -254,6 +255,13 @@ export const nodeRunnerTask = task({
       // siblings already finished), the helper CAS-finalises
       // WorkflowRun.status. Otherwise no-op.
       await tryFinaliseWorkflowRun(workflowRunId);
+      // Surface the worker output as the task's return value. Trigger
+      // serializes this as `run.output` and ships it via realtime SSE,
+      // so the frontend `RealtimeCoordinator` can read each node's
+      // result (Gemini text, Crop CDN URL, Response per-edge map)
+      // straight from the tag-filtered subscription — no fetch to
+      // /api/runs/[runId] needed in the happy path.
+      return workerOutput;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Worker functions already mark their own NodeRun row FAILED. We
@@ -315,7 +323,7 @@ async function executeWorker(args: {
   workflowRunId: string;
   parentByEdge: Record<string, NodeOutput>;
   graph: GraphSnapshot;
-}): Promise<void> {
+}): Promise<unknown> {
   const { node, edges, nodeRunId, workflowRunId, parentByEdge, graph } = args;
   const nodeId = node.id;
   const parentIds = graph.inn.get(nodeId) ?? [];
@@ -354,8 +362,7 @@ async function executeWorker(args: {
         w: resolveNumberInput(parentIds, parentByEdge, edges, nodeId, "w") ?? data.w ?? 100,
         h: resolveNumberInput(parentIds, parentByEdge, edges, nodeId, "h") ?? data.h ?? 100,
       };
-      await runCropImage(cropPayload);
-      return;
+      return await runCropImage(cropPayload);
     }
 
     case "gemini": {
@@ -384,8 +391,7 @@ async function executeWorker(args: {
         temperature: data.temperature,
         imageUrls,
       };
-      await runGemini(geminiPayload);
-      return;
+      return await runGemini(geminiPayload);
     }
 
     case "requestInputs": {
@@ -394,28 +400,25 @@ async function executeWorker(args: {
         | undefined;
       const fields: Record<string, unknown> = {};
       for (const f of data?.fields ?? []) fields[f.key] = f.value;
-      await runRequestInputs({ workflowRunId, nodeRunId, nodeId, fields });
-      return;
+      return await runRequestInputs({ workflowRunId, nodeRunId, nodeId, fields });
     }
 
     case "input": {
       const data = node.data as
         | { fieldType?: string; value?: unknown }
         | undefined;
-      await runInput({
+      return await runInput({
         workflowRunId,
         nodeRunId,
         nodeId,
         fieldType: data?.fieldType,
         value: data?.value,
       });
-      return;
     }
 
     case "response": {
       const { primary, perEdge } = buildResponseInputs(node, edges, parentByEdge);
-      await runResponse({ workflowRunId, nodeRunId, nodeId, primary, perEdge });
-      return;
+      return await runResponse({ workflowRunId, nodeRunId, nodeId, primary, perEdge });
     }
 
     case "stickyNote": {
@@ -430,7 +433,7 @@ async function executeWorker(args: {
           output: { skipped: true } as never,
         },
       });
-      return;
+      return { skipped: true };
     }
 
     default: {
