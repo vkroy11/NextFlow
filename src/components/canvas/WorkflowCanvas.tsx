@@ -106,6 +106,13 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
   const [running, setRunning] = useState(false);
+  // Captured from POST /run's response body. Together they let
+  // `HistorySidebar` subscribe to live Trigger.dev updates instead of
+  // polling our `/runs` endpoint on a `setInterval`. Sidebar's own
+  // 5 s `setInterval` fallback covers the case where the token mint
+  // failed or the SSE stream errors.
+  const [realtimeTag, setRealtimeTag] = useState<string | null>(null);
+  const [publicAccessToken, setPublicAccessToken] = useState<string | null>(null);
   const [showMinimap, setShowMinimap] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -264,10 +271,17 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
           setRunning(false);
           return;
         }
-        const { runId } = await res.json();
-        setCurrentRunId(runId);
+        const json = (await res.json()) as {
+          runId: string;
+          triggerRunId?: string;
+          publicAccessToken?: string | null;
+          realtimeTag?: string | null;
+        };
+        setCurrentRunId(json.runId);
+        setRealtimeTag(json.realtimeTag ?? null);
+        setPublicAccessToken(json.publicAccessToken ?? null);
         setHistoryKey((k) => k + 1);
-        pollRun(runId);
+        pollRun(json.runId);
       } catch {
         setRunning(false);
       }
@@ -544,6 +558,8 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         refreshKey={historyKey}
+        realtimeTag={realtimeTag}
+        publicAccessToken={publicAccessToken}
       />
     </div>
     </WorkflowRunProvider>

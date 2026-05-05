@@ -1,6 +1,7 @@
 import { callGemini } from "@/lib/gemini";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { rethrowClassified } from "@/lib/triggerErrors";
 
 export type GeminiPayload = {
   workflowRunId: string;
@@ -20,6 +21,17 @@ export type GeminiOutput = { text: string };
  * row — see `runCropImage` for the rationale.
  */
 export async function runGemini(payload: GeminiPayload): Promise<GeminiOutput> {
+  // SUCCESS-guard: if an earlier attempt already wrote the response, skip
+  // the (paid) Gemini round-trip on retry.
+  const existing = await prisma.nodeRun.findUnique({
+    where: { id: payload.nodeRunId },
+    select: { status: true, output: true },
+  });
+  if (existing?.status === "SUCCESS" && existing.output) {
+    const out = existing.output as { text?: string };
+    if (typeof out.text === "string") return { text: out.text };
+  }
+
   const startedAt = new Date();
   // Build the input record to persist on the NodeRun row. We deliberately
   // omit `imageUrls` when empty so the History sidebar's JSON view doesn't
@@ -69,6 +81,6 @@ export async function runGemini(payload: GeminiPayload): Promise<GeminiOutput> {
       where: { id: payload.nodeRunId },
       data: { status: "FAILED", finishedAt: new Date(), error: message },
     });
-    throw err;
+    rethrowClassified(err);
   }
 }

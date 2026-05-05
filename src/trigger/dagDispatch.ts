@@ -102,6 +102,19 @@ export async function loadParentNodeRuns(
 }
 
 /**
+ * Options forwarded to each child trigger call. The dispatcher in
+ * `nodeRunnerTask` passes its own tags + idempotency-key shape through so
+ * cascades inherit them — that's how the frontend can subscribe to all
+ * runs tagged `wfrun:<id>` and how Trigger.dev dedups a child trigger if
+ * a future code path bypasses our Postgres CAS.
+ */
+export type ChildTriggerOptions = {
+  tags?: string[];
+  idempotencyKey?: string;
+  idempotencyKeyTTL?: string;
+};
+
+/**
  * Called by `nodeRunnerTask` after a worker completes successfully. For
  * each child of `completedNodeId`:
  *   1. Look up the child's other parents from the graph.
@@ -111,6 +124,11 @@ export async function loadParentNodeRuns(
  *
  * Triggering inside the dispatcher is the whole reason LLM2 can start at
  * t ≈ 8 s without the orchestrator being involved.
+ *
+ * The `buildOptions(childNodeRunId)` callback yields per-child trigger
+ * options (tags + idempotencyKey) so the caller can include the child's
+ * own NodeRun id in the tag set without dispatcher-side knowledge of how
+ * tags are formatted.
  */
 export async function dispatchReadyChildren(args: {
   workflowRunId: string;
@@ -118,9 +136,13 @@ export async function dispatchReadyChildren(args: {
   completedNodeId: string;
   graph: GraphSnapshot;
   nodeRunIndex: Map<string, { id: string; status: string }>;
-  trigger: (payload: { workflowRunId: string; workflowId: string; nodeRunId: string; nodeId: string }) => Promise<unknown>;
+  trigger: (
+    payload: { workflowRunId: string; workflowId: string; nodeRunId: string; nodeId: string },
+    options: ChildTriggerOptions,
+  ) => Promise<unknown>;
+  buildOptions: (childNodeRunId: string, childNodeId: string) => ChildTriggerOptions;
 }): Promise<void> {
-  const { workflowRunId, workflowId, completedNodeId, graph, nodeRunIndex, trigger } = args;
+  const { workflowRunId, workflowId, completedNodeId, graph, nodeRunIndex, trigger, buildOptions } = args;
   const childIds = (graph.out.get(completedNodeId) ?? []).filter((id) => nodeRunIndex.has(id));
   if (childIds.length === 0) return;
 
@@ -162,12 +184,15 @@ export async function dispatchReadyChildren(args: {
     const claimed = await tryClaimNodeRun(childRun.id);
     if (!claimed) continue;
 
-    await trigger({
-      workflowRunId,
-      workflowId,
-      nodeRunId: childRun.id,
-      nodeId: childId,
-    });
+    await trigger(
+      {
+        workflowRunId,
+        workflowId,
+        nodeRunId: childRun.id,
+        nodeId: childId,
+      },
+      buildOptions(childRun.id, childId),
+    );
   }
 }
 

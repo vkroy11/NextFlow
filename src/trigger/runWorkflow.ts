@@ -1,8 +1,8 @@
-import { task, wait } from "@trigger.dev/sdk/v3";
+import { logger, metadata, task, wait } from "@trigger.dev/sdk/v3";
 import { prisma } from "@/lib/prisma";
 import { hasCycle, upstreamClosure } from "@/lib/dag";
 import type { CanvasEdge, CanvasNode } from "@/lib/types";
-import { nodeRunnerTask, type NodeRunnerPayload } from "./nodeRunner";
+import { buildChildTriggerOptions, nodeRunnerTask, type NodeRunnerPayload } from "./nodeRunner";
 import { loadGraph, tryClaimNodeRun } from "./dagDispatch";
 
 type Scope = "FULL" | "SINGLE" | "MULTI";
@@ -130,8 +130,29 @@ export const runWorkflowTask = task({
         nodeRunId,
         nodeId,
       };
-      await nodeRunnerTask.trigger(triggerPayload);
+      // Tags + idempotency key are shared with the dispatcher's cascade
+      // (see `buildChildTriggerOptions` in `nodeRunner.ts`) so root and
+      // descendant triggers wear identical metadata. Frontend Realtime
+      // subscribes via `wfrun:<id>`; idempotency-key shape is
+      // `wfrun-<id>-node-<nodeId>` and dedups any redundant scheduling.
+      await nodeRunnerTask.trigger(
+        triggerPayload,
+        buildChildTriggerOptions({ workflowId, workflowRunId, nodeRunId, nodeId }),
+      );
     }
+
+    // Surface a workflow-shape sidecar in the orchestrator's metadata —
+    // visible on the Trigger.dev dashboard run detail page. NOT used as
+    // primary state (that lives in `NodeRun` rows); just an at-a-glance
+    // for triage.
+    metadata.set("totalNodes", nodeRunIds.size);
+    metadata.set("rootCount", rootIds.length);
+    metadata.set("workflowRunId", workflowRunId);
+    logger.info("orchestrator setup complete", {
+      workflowRunId,
+      totalNodes: nodeRunIds.size,
+      rootCount: rootIds.length,
+    });
 
     // ----------------------------------------------------------------
     // Poll loop.
@@ -158,8 +179,12 @@ export const runWorkflowTask = task({
         select: { status: true },
       });
       if (rows.length === 0) break;
-      const allTerminal = rows.every((r) => TERMINAL_STATUSES.has(r.status));
-      if (allTerminal) break;
+      const terminalCount = rows.filter((r) => TERMINAL_STATUSES.has(r.status)).length;
+      // Light progress beacon for Trigger.dev dashboard observers — cheap
+      // (one metadata.set per 3 s) and mirrors what the History sidebar
+      // shows in real time over the Realtime subscription.
+      metadata.set("progress", `${terminalCount}/${rows.length}`);
+      if (terminalCount === rows.length) break;
     }
 
     // If we exited the loop because of the iteration cap (not all
@@ -202,6 +227,13 @@ export const runWorkflowTask = task({
         finishedAt: new Date(),
         error: firstError,
       },
+    });
+    metadata.set("finalStatus", finalStatus);
+    logger.info("orchestrator finished", {
+      workflowRunId,
+      finalStatus,
+      succeeded,
+      failedOrCancelled,
     });
     return { status: finalStatus };
   },

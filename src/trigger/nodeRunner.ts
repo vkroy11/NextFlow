@@ -1,4 +1,4 @@
-import { task } from "@trigger.dev/sdk/v3";
+import { logger, task } from "@trigger.dev/sdk/v3";
 import { prisma } from "@/lib/prisma";
 import type { CanvasEdge, CanvasNode } from "@/lib/types";
 import { runCropImage, type CropPayload } from "./cropImage";
@@ -16,9 +16,44 @@ import {
   loadGraph,
   loadNodeRunIndex,
   markNodeRunFailed,
+  type ChildTriggerOptions,
   type GraphSnapshot,
   type NodeOutput,
 } from "./dagDispatch";
+
+/**
+ * Tag/idempotency-key helpers shared with `runWorkflowTask`. Tags are
+ * surfaced on the Trigger.dev dashboard for run filtering and on the
+ * frontend for `useRealtimeRunsWithTag` subscriptions; idempotency keys
+ * are defense-in-depth atop our Postgres CAS so a future code path or
+ * retry can't double-schedule the same node.
+ */
+export function buildNodeRunnerTags(args: {
+  workflowId: string;
+  workflowRunId: string;
+  nodeRunId: string;
+}): string[] {
+  return [
+    `workflow:${args.workflowId}`,
+    `wfrun:${args.workflowRunId}`,
+    `node:${args.nodeRunId}`,
+  ];
+}
+
+export function buildNodeRunnerIdempotencyKey(args: {
+  workflowRunId: string;
+  nodeId: string;
+}): string {
+  return `wfrun-${args.workflowRunId}-node-${args.nodeId}`;
+}
+
+const NODE_RUNNER_IDEMPOTENCY_TTL = "1d";
+
+const NODE_RUNNER_CONCURRENCY = parseInt(
+  process.env.NODE_RUNNER_CONCURRENCY ??
+    (process.env.NODE_ENV === "development" ? "5" : "20"),
+  10,
+);
 
 /**
  * Universal node dispatcher.
@@ -71,12 +106,79 @@ export type NodeRunnerPayload = {
 
 export const nodeRunnerTask = task({
   id: "node-runner",
-  retry: { maxAttempts: 1 },
+  // Three retries with exponential jitter cover the realistic transient
+  // failures (Postgres connection blip, Trigger API hiccup, Transloadit
+  // 5xx). Permanent errors short-circuit via `AbortTaskRunError` thrown
+  // from `rethrowClassified` in the worker functions, so we don't waste
+  // retries on a bad API key or a malformed payload.
+  retry: {
+    maxAttempts: 3,
+    factor: 2,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 30_000,
+    randomize: true,
+  },
+  // Single shared queue across all node types. Caps simultaneous external-
+  // API calls (Transloadit + Gemini) regardless of how many nodes a
+  // workflow fans out — important once a single workflow can spawn 30+
+  // siblings via the recursive dispatcher. Limit is env-driven so prod
+  // (20) and dev (5) don't share a quota.
+  queue: {
+    name: "node-execution",
+    concurrencyLimit: NODE_RUNNER_CONCURRENCY,
+  },
   // Cap covers Crop's mandatory 30 s delay + Transloadit round-trip and
   // the longest Gemini calls. Bump if a future worker needs more.
   maxDuration: 90,
+  // Final-attempt safety net. Worker try/catch handles in-band failures
+  // (writes the row to FAILED before throwing), but OOM / host crash /
+  // maxDuration timeout skip those — this hook ensures the row is
+  // FAILED and descendants are CANCELLED so the orchestrator's 3 s poll
+  // loop can finalise within ~5 s instead of hitting its 600 s timeout.
+  // Hook fires only after the *final* retry attempt — correct semantics
+  // for `retry.maxAttempts: 3`.
+  onFailure: async ({ payload, error }) => {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("node-runner final failure", {
+      workflowRunId: payload.workflowRunId,
+      nodeId: payload.nodeId,
+      nodeRunId: payload.nodeRunId,
+      message,
+    });
+    await prisma.nodeRun.updateMany({
+      where: {
+        id: payload.nodeRunId,
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        error: `task crashed: ${message}`,
+      },
+    });
+    try {
+      const graph = await loadGraph(payload.workflowId);
+      const idx = await loadNodeRunIndex(payload.workflowRunId);
+      await cancelDescendants({
+        workflowRunId: payload.workflowRunId,
+        failedNodeId: payload.nodeId,
+        graph,
+        nodeRunIndex: idx,
+        reason: "failed in onFailure hook",
+      });
+    } catch (cleanupErr) {
+      // Cleanup is best-effort; the orchestrator's poll loop will still
+      // detect the FAILED row and time out remaining QUEUED rows on its
+      // own watchdog path.
+      logger.warn("onFailure cascade cleanup raised", {
+        workflowRunId: payload.workflowRunId,
+        message: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+      });
+    }
+  },
   run: async (payload: NodeRunnerPayload): Promise<void> => {
     const { workflowRunId, workflowId, nodeRunId, nodeId } = payload;
+    logger.info("node-runner start", { workflowRunId, nodeId, nodeRunId });
 
     const graph = await loadGraph(workflowId);
     const node = graph.byId.get(nodeId);
@@ -120,9 +222,16 @@ export const nodeRunnerTask = task({
         completedNodeId: nodeId,
         graph,
         nodeRunIndex: refreshedIndex,
-        trigger: (childPayload) =>
-          nodeRunnerTask.trigger(childPayload satisfies NodeRunnerPayload),
+        trigger: (childPayload, options) =>
+          nodeRunnerTask.trigger(childPayload satisfies NodeRunnerPayload, options),
+        buildOptions: (childNodeRunId, childNodeId) => buildChildTriggerOptions({
+          workflowId,
+          workflowRunId,
+          nodeRunId: childNodeRunId,
+          nodeId: childNodeId,
+        }),
       });
+      logger.info("node-runner success", { workflowRunId, nodeId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Worker functions already mark their own NodeRun row FAILED. The
@@ -136,9 +245,38 @@ export const nodeRunnerTask = task({
         nodeRunIndex: refreshedIndex,
         reason: `failed: ${message}`,
       });
+      // Re-throw so Trigger.dev can apply the retry policy. AbortTaskRunError
+      // (from `rethrowClassified` in the workers) short-circuits remaining
+      // attempts; everything else gets up to maxAttempts: 3.
+      throw err;
     }
   },
 });
+
+/**
+ * Compose the trigger options (tags + idempotency key + TTL) for any
+ * `nodeRunnerTask.trigger(...)` call — used both inside the dispatcher's
+ * cascade and from `runWorkflowTask` when firing roots.
+ */
+export function buildChildTriggerOptions(args: {
+  workflowId: string;
+  workflowRunId: string;
+  nodeRunId: string;
+  nodeId: string;
+}): ChildTriggerOptions {
+  return {
+    tags: buildNodeRunnerTags({
+      workflowId: args.workflowId,
+      workflowRunId: args.workflowRunId,
+      nodeRunId: args.nodeRunId,
+    }),
+    idempotencyKey: buildNodeRunnerIdempotencyKey({
+      workflowRunId: args.workflowRunId,
+      nodeId: args.nodeId,
+    }),
+    idempotencyKeyTTL: NODE_RUNNER_IDEMPOTENCY_TTL,
+  };
+}
 
 async function executeWorker(args: {
   node: CanvasNode;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Ban,
@@ -12,6 +12,7 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import { useRealtimeRunsWithTag } from "@trigger.dev/react-hooks";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/relativeTime";
 import { CopyButton } from "@/components/CopyButton";
@@ -438,36 +439,80 @@ export function HistorySidebar({
   open,
   onClose,
   refreshKey,
+  realtimeTag,
+  publicAccessToken,
 }: {
   workflowId: string;
   open: boolean;
   onClose: () => void;
   refreshKey: number;
+  realtimeTag?: string | null;
+  publicAccessToken?: string | null;
 }) {
   const [runs, setRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Initialised `true` so the placeholder shows on first paint without
+  // needing an effect to flip it — flipping state synchronously inside an
+  // effect body trips React's `react-hooks/set-state-in-effect` rule.
+  const [loading, setLoading] = useState(true);
 
+  // Single source of truth for fetching the rich detail view (timestamps,
+  // input/output JSON, errors) from our own Postgres. Realtime gives us
+  // the *signal* that something changed; we still use the DB for the
+  // payload because the Trigger run's `output` field doesn't carry our
+  // per-NodeRun bookkeeping.
+  const fetchRuns = useCallback(async () => {
+    if (!open) return;
+    try {
+      const res = await fetch(`/api/workflows/${workflowId}/runs`);
+      if (!res.ok) return;
+      const json = await res.json();
+      setRuns(json.runs);
+    } finally {
+      setLoading(false);
+    }
+  }, [workflowId, open]);
+
+  // Initial load + refetch whenever the parent bumps `refreshKey` (e.g.,
+  // a fresh run was just kicked off — we want to pick up its
+  // pre-created NodeRun rows immediately, not wait for a Realtime tick).
+  useEffect(() => {
+    void fetchRuns();
+  }, [fetchRuns, refreshKey]);
+
+  // Realtime path: subscribe to all Trigger runs tagged for the active
+  // workflow run. On any update (orchestrator status change, child
+  // node-runner state transition, metadata bump) refetch the rich detail
+  // from our DB. Debounced so a flurry of Trigger updates collapses into
+  // a single API call.
+  const realtimeEnabled = Boolean(open && realtimeTag && publicAccessToken);
+  const realtime = useRealtimeRunsWithTag(realtimeTag ?? "", {
+    accessToken: publicAccessToken ?? undefined,
+    enabled: realtimeEnabled,
+  });
+  const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!realtimeEnabled) return;
+    if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
+    refetchTimerRef.current = setTimeout(() => {
+      void fetchRuns();
+    }, 250);
+    return () => {
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
+    };
+    // `realtime.runs` is the change-detector — its identity flips on each
+    // Trigger update.
+  }, [realtimeEnabled, realtime.runs, fetchRuns]);
+
+  // Polling fallback: only when Realtime is not available (no token, or
+  // SSE errored). Cadence relaxed from 3 s to 5 s — Realtime is the
+  // expected path; the fallback is for graceful degradation, not the
+  // primary UX.
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
-    async function fetchRuns() {
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/workflows/${workflowId}/runs`);
-        if (!res.ok) return;
-        const json = await res.json();
-        if (!cancelled) setRuns(json.runs);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchRuns();
-    const t = setInterval(fetchRuns, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [workflowId, open, refreshKey]);
+    if (realtimeEnabled && !realtime.error) return;
+    const t = setInterval(() => void fetchRuns(), 5000);
+    return () => clearInterval(t);
+  }, [open, realtimeEnabled, realtime.error, fetchRuns]);
 
   if (!open) return null;
 
