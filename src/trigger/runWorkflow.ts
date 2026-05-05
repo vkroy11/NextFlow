@@ -1,9 +1,10 @@
-import { logger, metadata, task, wait } from "@trigger.dev/sdk/v3";
+import { logger, metadata, task } from "@trigger.dev/sdk/v3";
 import { prisma } from "@/lib/prisma";
 import { hasCycle, upstreamClosure } from "@/lib/dag";
 import type { CanvasEdge, CanvasNode } from "@/lib/types";
 import { buildChildTriggerOptions, nodeRunnerTask, type NodeRunnerPayload } from "./nodeRunner";
-import { loadGraph, tryClaimNodeRun } from "./dagDispatch";
+import { loadGraph, tryClaimNodeRun, tryFinaliseWorkflowRun } from "./dagDispatch";
+import { workflowJanitorTask } from "./janitor";
 
 type Scope = "FULL" | "SINGLE" | "MULTI";
 
@@ -15,36 +16,78 @@ export type RunWorkflowPayload = {
 };
 
 /**
- * Workflow orchestrator (recursive-dispatch model).
+ * Workflow orchestrator (setup-only — last-leaf finalisation model).
  *
- * Previous shape: this task walked the DAG one topological level at a time,
- * collapsing every executable node at a level into a single
- * `nodeRunnerTask.batchTriggerAndWait(...)`. That gave T = 0 fan-out *within*
- * a level but made the batch atomic at the level boundary — LLM2 (Level 2,
- * depends only on LLM1) had to wait for crops at Level 1 to finish even
- * though they're not its parents.
+ * Iteration history (long-form: `docs/dag-concurrency.md`):
+ *   v1–v4  Promise.all / IIFE / strict-sequential / per-type batches —
+ *          all crashed in prod with `Parallel waits are not supported`
+ *          or lost concurrency.
+ *   v5     Mixed-type `batchTriggerAndWait` via dispatcher — atomic at
+ *          the level boundary; gemini-2 had to wait for unrelated
+ *          crops at the same level.
+ *   v6     Recursive dispatch + 3 s `wait.for` polling for terminal
+ *          detection. Cross-type T=0 fan-out, gemini-2 unblocked
+ *          immediately, but orchestrator stayed alive polling DB.
+ *   v7     Trigger best-practice hardening (tags, idempotency keys,
+ *          retries, queue, onFailure, Realtime).
+ *   v8     **Current**: orchestrator drops the poll loop entirely. The
+ *          *last* node-runner to reach a terminal status calls
+ *          `tryFinaliseWorkflowRun` (CAS on `WorkflowRun.status` =
+ *          RUNNING) and writes the final aggregated status. The
+ *          orchestrator returns immediately after firing roots.
  *
- * New shape: setup + poll. The orchestrator pre-creates a NodeRun row for
- * every executable node in QUEUED status, then triggers only the root
- * nodes via fire-and-forget `nodeRunnerTask.trigger(...)`. From there each
- * `nodeRunnerTask` invocation cascades to its children directly when their
- * other parents are SUCCESS — see `dagDispatch.ts`. The orchestrator just
- * polls `WorkflowRun.nodeRuns` until everything is terminal, then writes
- * the final WorkflowRun.status.
+ * Why drop the poll: the frontend already gets sub-second updates via
+ * Realtime SSE (`useRealtimeRunsWithTag`); the orchestrator's poll
+ * existed only to detect "everything terminal" so it could write
+ * `WorkflowRun.status`. That detection is naturally available at the
+ * last node-runner that flips the final row to terminal — let it do
+ * the finalise via Postgres CAS instead. Eliminates ~20 indexed queries
+ * per 60 s workflow plus the orchestrator's continuous worker
+ * occupation. See FAQ Q1 in `docs/dag-concurrency.md` for the trade-off
+ * analysis.
  *
- * Trigger.dev v4 parallel-waits-rule compliance: the orchestrator's only
- * suspension primitive is `wait.for({ seconds: ... })` in a sequential
- * loop. `nodeRunnerTask.trigger(...)` is fire-and-forget, never awaited.
- * Children-fan-out happens inside the dispatcher task, not in this loop.
+ * Watchdog: replaced by `workflowJanitorTask` (in `janitor.ts`) — a
+ * scheduled task that scans for `WorkflowRun`s stuck in RUNNING longer
+ * than 10 minutes and force-finalises them. Catches the rare case
+ * where a worker crashes in a way that bypasses both its own try/catch
+ * AND the `onFailure` hook.
+ *
+ * Trigger.dev v4 parallel-waits-rule compliance: still satisfied
+ * trivially — the orchestrator never awaits anything that suspends
+ * (`tasks.trigger` is fire-and-forget, no `wait.for` anywhere).
  */
 export const runWorkflowTask = task({
   id: "run-workflow",
-  // Cap matches the worst-case smoke-test scenario (~60 s for the sample
-  // workflow). Bump if a future graph is genuinely longer; remember the
-  // poll loop counter below assumes this number.
-  maxDuration: 600,
+  // Setup-only — this task does no waiting. 60 s is comfortable for
+  // pre-creating NodeRun rows + firing roots even on a 100-node graph.
+  maxDuration: 60,
+  // Crash-recovery: if setup throws (e.g., Postgres connection drops
+  // mid-loop), make sure the WorkflowRun and its NodeRun rows reach a
+  // terminal state instead of staying RUNNING forever. The janitor
+  // would catch this eventually, but the hook makes recovery
+  // sub-second.
+  onFailure: async ({ payload, error }) => {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("orchestrator final failure", {
+      workflowRunId: payload.workflowRunId,
+      message,
+    });
+    await prisma.nodeRun.updateMany({
+      where: {
+        workflowRunId: payload.workflowRunId,
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      data: {
+        status: "CANCELLED",
+        finishedAt: new Date(),
+        error: `orchestrator crashed: ${message}`,
+      },
+    });
+    await tryFinaliseWorkflowRun(payload.workflowRunId);
+  },
   run: async (payload: RunWorkflowPayload) => {
     const { workflowRunId, workflowId, scope, targetNodeIds } = payload;
+    logger.info("orchestrator setup begin", { workflowRunId, workflowId, scope });
 
     const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
     if (!workflow) throw new Error(`workflow ${workflowId} not found`);
@@ -80,7 +123,7 @@ export const runWorkflowTask = task({
     // gives every node a stable id we can CAS-claim later from a
     // dispatcher task, and makes the History sidebar show all upcoming
     // work immediately (rows transition QUEUED → RUNNING → SUCCESS as
-    // workers progress).
+    // workers progress over Realtime).
     const nodeRunIds = new Map<string, string>();
     for (const node of nodes) {
       if (!executable.has(node.id)) continue;
@@ -101,7 +144,9 @@ export const runWorkflowTask = task({
     });
 
     if (nodeRunIds.size === 0) {
-      // Nothing to run — finalize as SUCCESS so the UI doesn't hang.
+      // Nothing to run — finalise as SUCCESS so the UI doesn't hang.
+      // Done directly (not via tryFinaliseWorkflowRun) because there
+      // are no NodeRun rows for that helper to inspect.
       await prisma.workflowRun.update({
         where: { id: workflowRunId },
         data: { status: "SUCCESS", finishedAt: new Date() },
@@ -110,14 +155,18 @@ export const runWorkflowTask = task({
     }
 
     // Roots: executable nodes whose parents are all *not* in the
-    // executable set. Triggered with fire-and-forget `.trigger()` after a
-    // CAS claim — no parallel-waits issue because we never await them.
+    // executable set. Triggered with fire-and-forget `.trigger()` after
+    // a CAS claim — no parallel-waits issue because we never await them.
     const rootIds: string[] = [];
     for (const node of nodes) {
       if (!executable.has(node.id)) continue;
       const parents = (graph.inn.get(node.id) ?? []).filter((p) => executable.has(p));
       if (parents.length === 0) rootIds.push(node.id);
     }
+
+    metadata.set("totalNodes", nodeRunIds.size);
+    metadata.set("rootCount", rootIds.length);
+    metadata.set("workflowRunId", workflowRunId);
 
     for (const nodeId of rootIds) {
       const nodeRunId = nodeRunIds.get(nodeId);
@@ -141,106 +190,21 @@ export const runWorkflowTask = task({
       );
     }
 
-    // Surface a workflow-shape sidecar in the orchestrator's metadata —
-    // visible on the Trigger.dev dashboard run detail page. NOT used as
-    // primary state (that lives in `NodeRun` rows); just an at-a-glance
-    // for triage.
-    metadata.set("totalNodes", nodeRunIds.size);
-    metadata.set("rootCount", rootIds.length);
-    metadata.set("workflowRunId", workflowRunId);
-    logger.info("orchestrator setup complete", {
+    logger.info("orchestrator setup complete — handing off to dispatcher cascade", {
       workflowRunId,
       totalNodes: nodeRunIds.size,
       rootCount: rootIds.length,
     });
 
-    // ----------------------------------------------------------------
-    // Poll loop.
-    // ----------------------------------------------------------------
-    // We wait sequentially with `wait.for` — never with Promise.all — so
-    // there's only ever one pending suspension. Trigger v4 parallel-waits
-    // rule satisfied trivially.
-    //
-    // Cadence: 3 s polls. Short enough to keep the run history sidebar
-    // feeling live; long enough not to thrash Postgres.
-    //
-    // Timeout: maxDuration on the task is the hard ceiling. The loop
-    // counter is just defence-in-depth so a runaway dispatcher can't
-    // pin the orchestrator forever.
-    const POLL_SECONDS = 3;
-    const MAX_POLL_ITERATIONS = Math.ceil(600 / POLL_SECONDS);
-    const TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED", "CANCELLED"]);
-
-    let iter = 0;
-    while (iter++ < MAX_POLL_ITERATIONS) {
-      await wait.for({ seconds: POLL_SECONDS });
-      const rows = await prisma.nodeRun.findMany({
-        where: { workflowRunId },
-        select: { status: true },
-      });
-      if (rows.length === 0) break;
-      const terminalCount = rows.filter((r) => TERMINAL_STATUSES.has(r.status)).length;
-      // Light progress beacon for Trigger.dev dashboard observers — cheap
-      // (one metadata.set per 3 s) and mirrors what the History sidebar
-      // shows in real time over the Realtime subscription.
-      metadata.set("progress", `${terminalCount}/${rows.length}`);
-      if (terminalCount === rows.length) break;
-    }
-
-    // If we exited the loop because of the iteration cap (not all
-    // terminal), forcibly cancel any non-terminal rows so the run can be
-    // finalized cleanly. This is the watchdog path — a node-runner
-    // crashing without setting its row to FAILED would otherwise leave
-    // the run stuck in RUNNING forever.
-    await prisma.nodeRun.updateMany({
-      where: {
-        workflowRunId,
-        status: { in: ["QUEUED", "RUNNING"] },
-      },
-      data: {
-        status: "CANCELLED",
-        finishedAt: new Date(),
-        error: "workflow timed out before this node finished",
-      },
-    });
-
-    // Finalize WorkflowRun.status by aggregating NodeRun outcomes.
-    const finalRows = await prisma.nodeRun.findMany({
-      where: { workflowRunId },
-      select: { status: true, error: true },
-    });
-    const succeeded = finalRows.filter((r) => r.status === "SUCCESS").length;
-    const failedOrCancelled = finalRows.filter(
-      (r) => r.status === "FAILED" || r.status === "CANCELLED",
-    ).length;
-
-    let finalStatus: "SUCCESS" | "FAILED" | "PARTIAL";
-    if (failedOrCancelled === 0) finalStatus = "SUCCESS";
-    else if (succeeded === 0) finalStatus = "FAILED";
-    else finalStatus = "PARTIAL";
-
-    const firstError = finalRows.find((r) => r.error)?.error ?? null;
-    await prisma.workflowRun.update({
-      where: { id: workflowRunId },
-      data: {
-        status: finalStatus,
-        finishedAt: new Date(),
-        error: firstError,
-      },
-    });
-    metadata.set("finalStatus", finalStatus);
-    logger.info("orchestrator finished", {
-      workflowRunId,
-      finalStatus,
-      succeeded,
-      failedOrCancelled,
-    });
-    return { status: finalStatus };
+    // Setup-only orchestrator: return immediately. The last node-runner
+    // to reach terminal will call `tryFinaliseWorkflowRun` and write
+    // the final WorkflowRun.status.
+    return { status: "RUNNING" as const, totalNodes: nodeRunIds.size };
   },
 });
 
 // Re-export so the trigger compiler picks up all tasks via this entry.
-// The deployable surface is `run-workflow` (orchestrator) +
-// `node-runner` (universal dispatcher); cropImage / gemini / inlineNodes
-// are plain async worker functions invoked from the dispatcher.
-export { nodeRunnerTask };
+// The deployable surface is `run-workflow` (orchestrator, setup-only) +
+// `node-runner` (universal dispatcher) + `workflow-janitor` (scheduled
+// safety net for stuck runs).
+export { nodeRunnerTask, workflowJanitorTask };

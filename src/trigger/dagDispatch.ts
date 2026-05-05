@@ -332,4 +332,59 @@ export async function markNodeRunFailed(nodeRunId: string, error: string): Promi
   });
 }
 
+const TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED", "CANCELLED"]);
+
+/**
+ * Atomically finalise the `WorkflowRun` row if (and only if) every
+ * `NodeRun` for this run has reached a terminal status. Called by every
+ * `nodeRunnerTask` invocation after its own status update — success
+ * path, failure path, and the `onFailure` lifecycle hook — and by the
+ * janitor scheduled task as a last-resort safety net.
+ *
+ * Replaces the orchestrator's old `wait.for(3s)` polling loop. The
+ * orchestrator now returns immediately after firing roots; the *last*
+ * NodeRun to reach a terminal state runs this helper and finalises the
+ * run.
+ *
+ * Race-safety: aggregates first, then a single CAS-style `updateMany`
+ * filtered by `status: "RUNNING"`. Multiple concurrent callers can all
+ * pass the "is everything terminal?" check at the same instant; only
+ * one wins the UPDATE (its `count` is `1`); the losers see `count: 0`
+ * and exit silently. Idempotent — safe to call from anywhere.
+ *
+ * @returns `true` iff THIS caller wrote the final WorkflowRun status.
+ */
+export async function tryFinaliseWorkflowRun(workflowRunId: string): Promise<boolean> {
+  const rows = await prisma.nodeRun.findMany({
+    where: { workflowRunId },
+    select: { status: true, error: true },
+  });
+
+  if (rows.length === 0) return false;
+  if (!rows.every((r) => TERMINAL_STATUSES.has(r.status))) return false;
+
+  const failedOrCancelled = rows.filter(
+    (r) => r.status === "FAILED" || r.status === "CANCELLED",
+  ).length;
+  const succeeded = rows.filter((r) => r.status === "SUCCESS").length;
+
+  let finalStatus: "SUCCESS" | "FAILED" | "PARTIAL";
+  if (failedOrCancelled === 0) finalStatus = "SUCCESS";
+  else if (succeeded === 0) finalStatus = "FAILED";
+  else finalStatus = "PARTIAL";
+
+  const firstError = rows.find((r) => r.error)?.error ?? null;
+
+  const claim = await prisma.workflowRun.updateMany({
+    where: { id: workflowRunId, status: "RUNNING" },
+    data: {
+      status: finalStatus,
+      finishedAt: new Date(),
+      error: firstError,
+    },
+  });
+
+  return claim.count === 1;
+}
+
 export type JsonInput = Prisma.InputJsonValue;

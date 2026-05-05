@@ -16,6 +16,7 @@ import {
   loadGraph,
   loadNodeRunIndex,
   markNodeRunFailed,
+  tryFinaliseWorkflowRun,
   type ChildTriggerOptions,
   type GraphSnapshot,
   type NodeOutput,
@@ -167,14 +168,18 @@ export const nodeRunnerTask = task({
         reason: "failed in onFailure hook",
       });
     } catch (cleanupErr) {
-      // Cleanup is best-effort; the orchestrator's poll loop will still
-      // detect the FAILED row and time out remaining QUEUED rows on its
-      // own watchdog path.
+      // Cleanup is best-effort; the workflow janitor will eventually
+      // catch any stuck rows and force-finalise the run.
       logger.warn("onFailure cascade cleanup raised", {
         workflowRunId: payload.workflowRunId,
         message: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
       });
     }
+    // Last-leaf finalisation: if this failure made the run fully
+    // terminal (every NodeRun row is now SUCCESS / FAILED / CANCELLED),
+    // atomically write the aggregated WorkflowRun.status. CAS in the
+    // helper means racing finalisers safely no-op.
+    await tryFinaliseWorkflowRun(payload.workflowRunId);
   },
   run: async (payload: NodeRunnerPayload): Promise<void> => {
     const { workflowRunId, workflowId, nodeRunId, nodeId } = payload;
@@ -200,6 +205,9 @@ export const nodeRunnerTask = task({
         nodeRunIndex,
         reason: "failed",
       });
+      // This failure may have flipped the last non-terminal row to
+      // CANCELLED; try to finalise.
+      await tryFinaliseWorkflowRun(workflowRunId);
       return;
     }
 
@@ -232,11 +240,16 @@ export const nodeRunnerTask = task({
         }),
       });
       logger.info("node-runner success", { workflowRunId, nodeId });
+      // Last-leaf finalisation: if this completion made every row in
+      // the workflow terminal (e.g., this is a leaf node and all its
+      // siblings already finished), the helper CAS-finalises
+      // WorkflowRun.status. Otherwise no-op.
+      await tryFinaliseWorkflowRun(workflowRunId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Worker functions already mark their own NodeRun row FAILED. The
-      // orchestrator's poll loop will see the failure; we just need to
-      // clean up downstream rows so it doesn't wait forever.
+      // Worker functions already mark their own NodeRun row FAILED. We
+      // cascade-cancel downstream so the run can finalise without
+      // waiting on now-orphaned descendants.
       const refreshedIndex = await loadNodeRunIndex(workflowRunId);
       await cancelDescendants({
         workflowRunId,
@@ -245,6 +258,11 @@ export const nodeRunnerTask = task({
         nodeRunIndex: refreshedIndex,
         reason: `failed: ${message}`,
       });
+      // The cascade may have flipped the last non-terminal row to
+      // CANCELLED; finalise if so. Done before the rethrow because the
+      // throw triggers Trigger's retry path — and on the *final* retry
+      // failure, the onFailure hook also calls this. Belt + braces.
+      await tryFinaliseWorkflowRun(workflowRunId);
       // Re-throw so Trigger.dev can apply the retry policy. AbortTaskRunError
       // (from `rethrowClassified` in the workers) short-circuits remaining
       // attempts; everything else gets up to maxAttempts: 3.

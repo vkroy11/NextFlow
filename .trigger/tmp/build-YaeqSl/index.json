@@ -1,0 +1,75 @@
+{
+  "configPath": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/trigger.config.mjs",
+  "customConditions": [
+  ],
+  "prompts": [
+  ],
+  "queues": [
+    {
+      "concurrencyLimit": 5,
+      "name": "node-execution"
+    }
+  ],
+  "runtime": "node",
+  "runtimeVersion": "24.15.0",
+  "tasks": [
+    {
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/src/trigger/nodeRunner.mjs",
+      "filePath": "src/trigger/nodeRunner.ts",
+      "id": "node-runner",
+      "maxDuration": 90,
+      "queue": {
+        "concurrencyLimit": 5,
+        "name": "node-execution"
+      },
+      "retry": {
+        "factor": 2,
+        "maxAttempts": 3,
+        "maxTimeoutInMs": 30000,
+        "minTimeoutInMs": 1000,
+        "randomize": true
+      }
+    },
+    {
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
+      "filePath": "src/trigger/runWorkflow.ts",
+      "id": "workflow-janitor",
+      "maxDuration": 60,
+      "retry": {
+        "factor": 2,
+        "maxAttempts": 1,
+        "maxTimeoutInMs": 60000,
+        "minTimeoutInMs": 1000,
+        "randomize": true
+      },
+      "schedule": {
+        "cron": "*/5 * * * *",
+        "timezone": "UTC"
+      },
+      "triggerSource": "schedule"
+    },
+    {
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
+      "filePath": "src/trigger/runWorkflow.ts",
+      "id": "run-workflow",
+      "maxDuration": 60,
+      "retry": {
+        "factor": 1,
+        "maxAttempts": 1,
+        "maxTimeoutInMs": 1000,
+        "minTimeoutInMs": 1000,
+        "randomize": false
+      }
+    }
+  ],
+  "timings": {
+    "src/trigger/cropImage.ts": 16.10541699999999,
+    "src/trigger/dagDispatch.ts": 1.3442920000001095,
+    "src/trigger/gemini.ts": 1.1213749999999436,
+    "src/trigger/inlineNodes.ts": 1.7508329999998296,
+    "src/trigger/janitor.ts": 2.6783750000001874,
+    "src/trigger/nodeRunner.ts": 375.14920799999993,
+    "src/trigger/runWorkflow.ts": 91.81895800000007
+  },
+  "workerEntryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/.npm/_npx/f51a09bd0abf5f10/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs"
+}

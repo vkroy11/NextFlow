@@ -131,7 +131,7 @@ sequenceDiagram
     end
 ```
 
-**After — Realtime SSE push + idempotency keys + retries + `onFailure` hook:**
+**After — Realtime SSE push + setup-only orchestrator + last-leaf finalisation + janitor watchdog:**
 
 ```mermaid
 sequenceDiagram
@@ -153,7 +153,7 @@ sequenceDiagram
     U->>T: useRealtimeRunsWithTag(realtimeTag, accessToken)
     T-->>U: SSE stream open
 
-    par Orchestrator on Trigger
+    par Orchestrator on Trigger (setup-only, returns immediately)
         T->>DB: pre-create N NodeRun rows (QUEUED)
         T->>DB: WorkflowRun = RUNNING
         loop for each root
@@ -161,19 +161,15 @@ sequenceDiagram
             T->>T: nodeRunnerTask.trigger with tags + idempotencyKey
         end
         T->>T: metadata.set totalNodes = N
-        loop poll every 3 s
-            T->>DB: SELECT NodeRun.status
-            T->>T: metadata.set progress X/Y
-            T-->>T: wait.for 3 seconds
-        end
-        T->>DB: WorkflowRun = SUCCESS / FAILED / PARTIAL
+        Note over T: orchestrator returns — no poll loop, no waiting
     and Each node-runner (queue node-execution, retry maxAttempts 3)
         T->>DB: SELECT NodeRun (SUCCESS-guard short-circuits retries)
         T->>DB: UPDATE NodeRun (startedAt, input)
         T->>+T: runCropImage / runGemini (4xx aborts, 5xx retries)
         T->>DB: UPDATE NodeRun (SUCCESS, output)
         T->>T: dispatchReadyChildren — CAS + .trigger with tags + idempotencyKey
-        Note over T: onFailure hook (final attempt) marks row FAILED + cancelDescendants
+        T->>DB: tryFinaliseWorkflowRun — if all rows terminal CAS WorkflowRun = SUCCESS / FAILED / PARTIAL
+        Note over T: onFailure hook (final attempt) marks row FAILED + cancelDescendants + tryFinaliseWorkflowRun
     and Realtime push to frontend
         T-->>U: SSE run state change (orchestrator + each node-runner)
         U->>U: debounce 250 ms
@@ -181,6 +177,12 @@ sequenceDiagram
         V->>DB: SELECT WorkflowRun + nodeRuns
         V-->>U: runs JSON
         Note over U: 5 s setInterval fallback only when SSE errors or token absent
+    and Janitor every 5 min (workflow-janitor scheduled task)
+        T->>DB: SELECT WorkflowRun WHERE status RUNNING AND startedAt older than 10 min
+        opt any stuck runs
+            T->>DB: UPDATE NodeRun status QUEUED RUNNING to CANCELLED
+            T->>DB: tryFinaliseWorkflowRun (CAS WorkflowRun status)
+        end
     end
 ```
 
@@ -188,6 +190,8 @@ Key visible differences in the "after" flow:
 
 - **Realtime token mint** is one extra Trigger API call before `tasks.trigger` — minted server-side using `TRIGGER_SECRET_KEY`, returned to the browser scoped only to `wfrun:<runId>` for 2 h.
 - **Frontend's `setInterval(fetchRuns, 3000)` is gone** for active runs — `useRealtimeRunsWithTag` opens an SSE connection and pushes updates as Trigger sees them. The browser still hits `/runs` for the rich detail (timestamps, input/output JSON), but only after a Realtime tick (debounced 250 ms), not on a fixed timer.
+- **Orchestrator's `wait.for(3s)` poll loop is gone**. The orchestrator does setup (pre-create rows, fire roots) and **returns immediately**. The *last* node-runner to flip a row to a terminal status calls `tryFinaliseWorkflowRun`, which CAS-updates `WorkflowRun.status = RUNNING → SUCCESS/FAILED/PARTIAL`. Race-safe (Postgres `updateMany` filtered by `status: "RUNNING"` — only one concurrent caller wins). Eliminates ~20 indexed queries per 60 s workflow plus the orchestrator's continuous worker occupation.
+- **Janitor scheduled task** (`workflow-janitor`, runs every 5 min via `schedules.task`) replaces the orchestrator's old in-loop watchdog. Scans for `WorkflowRun`s in `RUNNING` for >10 min, force-cancels non-terminal NodeRuns, and calls `tryFinaliseWorkflowRun`. Last-resort safety net for the rare case where a worker crashes in a way that bypasses both its own try/catch and the `onFailure` hook.
 - **Idempotency keys** mean a retried HTTP call (API route) or a retried Trigger attempt (dispatcher) won't double-launch.
 - **Retries with `AbortTaskRunError`** mean transient Transloadit / Gemini hiccups recover automatically (3 attempts, exponential 1 s → 30 s with jitter); permanent 4xx errors short-circuit the policy.
 - **`onFailure` hook + cascade-cancel** means a worker crashing in a way its own try/catch can't see (OOM, host failure, `maxDuration` timeout) still leaves the row `FAILED` + descendants `CANCELLED` — orchestrator finalises within ~5 s instead of waiting 600 s on phantom RUNNING rows.
@@ -310,16 +314,23 @@ src/
 ├─ store/
 │  └─ useWorkflowStore.ts     Zustand store: nodes, edges, history, run status
 ├─ trigger/
-│  ├─ runWorkflow.ts          orchestrator: setup + poll + finalise.
-│  │                          Roots fired with buildChildTriggerOptions()
-│  │                          (tags + idempotencyKey). metadata.set + logger.info.
+│  ├─ runWorkflow.ts          orchestrator: SETUP-ONLY. Pre-create rows,
+│  │                          fire roots, return immediately. onFailure
+│  │                          hook for setup-time crashes.
 │  ├─ nodeRunner.ts           universal dispatcher. retry: { maxAttempts: 3,
 │  │                          factor: 2, randomize: true }. queue: { name:
 │  │                          "node-execution", concurrencyLimit: env-driven }.
-│  │                          onFailure hook. buildChildTriggerOptions().
+│  │                          onFailure hook. tryFinaliseWorkflowRun
+│  │                          called on every exit path.
 │  ├─ dagDispatch.ts          loadGraph, tryClaimNodeRun (CAS),
 │  │                          dispatchReadyChildren, cancelDescendants,
-│  │                          buildParentByEdge, ChildTriggerOptions
+│  │                          buildParentByEdge, ChildTriggerOptions,
+│  │                          tryFinaliseWorkflowRun (last-leaf
+│  │                          WorkflowRun finaliser, CAS-safe).
+│  ├─ janitor.ts              workflow-janitor: schedules.task, cron */5 * * * *.
+│  │                          Scans for RUNNING WorkflowRuns older than
+│  │                          10 min, cancels non-terminals, finalises.
+│  │                          Last-resort safety net.
 │  ├─ inlineNodes.ts          runRequestInputs / runInput / runResponse +
 │  │                          buildResponseInputs (fast no-network workers)
 │  ├─ cropImage.ts            runCropImage: SUCCESS-guard, 30 s artificial
@@ -364,7 +375,7 @@ The two services don't share secrets.
 
 ## Notable design decisions
 
-- **Recursive dispatch instead of level-batched `triggerAndWait`** — Trigger v4 forbids multiple pending `triggerAndWait`s on one task, and `batchTriggerAndWait` is atomic at its level boundary (LLM2 had to wait for unrelated crops at the same level). The current shape: orchestrator pre-creates `NodeRun` rows in `QUEUED`, fire-and-forget triggers roots, and each `nodeRunnerTask` cascades to ready children directly via `nodeRunnerTask.trigger(...)` after CAS-claiming the row. Orchestrator polls every 3 s on its own DB only for finalisation. See [`docs/dag-concurrency.md`](./docs/dag-concurrency.md) for the iteration history (eager-IIFE → strict sequential → per-type batches → mixed-batch → recursive dispatch).
+- **Recursive dispatch + last-leaf finalisation** — Trigger v4 forbids multiple pending `triggerAndWait`s on one task, and `batchTriggerAndWait` is atomic at its level boundary (LLM2 had to wait for unrelated crops at the same level). The current shape: orchestrator pre-creates `NodeRun` rows in `QUEUED`, fire-and-forget triggers roots, and **returns immediately**. Each `nodeRunnerTask` cascades to ready children directly via `nodeRunnerTask.trigger(...)` after CAS-claiming the row, and on every exit path calls `tryFinaliseWorkflowRun` — which CAS-updates `WorkflowRun.status` if every NodeRun row is now terminal. The *last* terminal node wins the race; losers no-op. No orchestrator poll loop. See [`docs/dag-concurrency.md`](./docs/dag-concurrency.md) for the full iteration history (eager-IIFE → strict sequential → per-type batches → mixed-batch → recursive dispatch + 3 s poll → last-leaf finalisation).
 - **CAS + idempotency keys are layered, not redundant.** Postgres `updateMany WHERE status=QUEUED` gives the immediate `RUNNING` UI transition (sidebar shows "Running" the moment a parent finishes). Trigger.dev `idempotencyKey: wfrun-<id>-node-<nodeId>` dedups the actual scheduling if a future code path or retry bypasses the CAS. Both layers retained.
 - **Trigger.dev Realtime replaces 3 s sidebar polling** — the `/run` route mints `auth.createPublicToken({ scopes: { read: { tags: ["wfrun:<id>"] } }, expirationTime: "2h" })` and ships it to the browser. `useRealtimeRunsWithTag` opens an SSE stream; on each push the sidebar debounces 250 ms then refetches our `/runs` endpoint for the rich detail (timestamps, input/output JSON). The `setInterval(fetchRuns, 5000)` fallback only fires when Realtime is unavailable or the SSE errors.
 - **`onFailure` lifecycle hook is the safety net** for worker crashes outside the worker's own try/catch (OOM, host failure, `maxDuration` timeout). It marks the row `FAILED` + cascades CANCELLED to descendants via `cancelDescendants`. Without it, a crashed worker leaves the row in `RUNNING` until the orchestrator's 600 s watchdog fires.
