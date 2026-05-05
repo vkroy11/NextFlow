@@ -143,44 +143,44 @@ sequenceDiagram
 
     U->>V: POST /api/workflows/[id]/run
     V->>DB: INSERT WorkflowRun (QUEUED)
-    V->>T: auth.createPublicToken({ tags: [wfrun:&lt;id&gt;] })
+    V->>T: auth.createPublicToken (scope tags wfrun id, expiry 2h)
     T-->>V: publicAccessToken
-    V->>T: tasks.trigger("run-workflow", payload,<br/>{ tags: [workflow:, wfrun:],<br/>  idempotencyKey: workflowRunId,<br/>  idempotencyKeyTTL: "1d" })
-    T-->>V: { handle.id }
-    V-->>U: 202 { runId, publicAccessToken, realtimeTag }
+    V->>T: tasks.trigger run-workflow with tags + idempotencyKey
+    T-->>V: handle.id
+    V-->>U: 202 runId, publicAccessToken, realtimeTag
 
     Note over U,T: Frontend subscribes to Trigger.dev Realtime
-    U->>T: useRealtimeRunsWithTag(realtimeTag, { accessToken })
+    U->>T: useRealtimeRunsWithTag(realtimeTag, accessToken)
     T-->>U: SSE stream open
 
     par Orchestrator on Trigger
         T->>DB: pre-create N NodeRun rows (QUEUED)
         T->>DB: WorkflowRun = RUNNING
         loop for each root
-            T->>DB: CAS QUEUED→RUNNING
-            T->>T: nodeRunnerTask.trigger(payload,<br/>{ tags, idempotencyKey: wfrun-id-node-X, ttl })
+            T->>DB: CAS QUEUED to RUNNING
+            T->>T: nodeRunnerTask.trigger with tags + idempotencyKey
         end
-        T->>T: metadata.set("totalNodes", N)
+        T->>T: metadata.set totalNodes = N
         loop poll every 3 s
             T->>DB: SELECT NodeRun.status
-            T->>T: metadata.set("progress", "X/Y")
-            T-->>T: wait.for({seconds: 3})
+            T->>T: metadata.set progress X/Y
+            T-->>T: wait.for 3 seconds
         end
-        T->>DB: WorkflowRun = SUCCESS/FAILED/PARTIAL
-    and Each node-runner (queue: node-execution, retry maxAttempts:3)
+        T->>DB: WorkflowRun = SUCCESS / FAILED / PARTIAL
+    and Each node-runner (queue node-execution, retry maxAttempts 3)
         T->>DB: SELECT NodeRun (SUCCESS-guard short-circuits retries)
         T->>DB: UPDATE NodeRun (startedAt, input)
-        T->>+T: runCropImage() / runGemini()<br/>permanent 4xx → AbortTaskRunError<br/>5xx / network → exponential retry
+        T->>+T: runCropImage / runGemini (4xx aborts, 5xx retries)
         T->>DB: UPDATE NodeRun (SUCCESS, output)
-        T->>T: dispatchReadyChildren — CAS + .trigger() (with tags + idempotencyKey)
-        Note over T: onFailure hook (final attempt)<br/>marks row FAILED + cancelDescendants
+        T->>T: dispatchReadyChildren — CAS + .trigger with tags + idempotencyKey
+        Note over T: onFailure hook (final attempt) marks row FAILED + cancelDescendants
     and Realtime push to frontend
-        T-->>U: SSE: run state change (orchestrator + each node-runner)
+        T-->>U: SSE run state change (orchestrator + each node-runner)
         U->>U: debounce 250 ms
         U->>V: GET /api/workflows/[id]/runs (rich detail)
         V->>DB: SELECT WorkflowRun + nodeRuns
-        V-->>U: { runs: [...] }
-        Note over U: 5 s setInterval fallback only<br/>when SSE errors or token absent
+        V-->>U: runs JSON
+        Note over U: 5 s setInterval fallback only when SSE errors or token absent
     end
 ```
 
