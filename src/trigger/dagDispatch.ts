@@ -102,6 +102,19 @@ export async function loadParentNodeRuns(
 }
 
 /**
+ * Options forwarded to each child trigger call. The dispatcher in
+ * `nodeRunnerTask` passes its own tags + idempotency-key shape through so
+ * cascades inherit them — that's how the frontend can subscribe to all
+ * runs tagged `wfrun:<id>` and how Trigger.dev dedups a child trigger if
+ * a future code path bypasses our Postgres CAS.
+ */
+export type ChildTriggerOptions = {
+  tags?: string[];
+  idempotencyKey?: string;
+  idempotencyKeyTTL?: string;
+};
+
+/**
  * Called by `nodeRunnerTask` after a worker completes successfully. For
  * each child of `completedNodeId`:
  *   1. Look up the child's other parents from the graph.
@@ -111,6 +124,11 @@ export async function loadParentNodeRuns(
  *
  * Triggering inside the dispatcher is the whole reason LLM2 can start at
  * t ≈ 8 s without the orchestrator being involved.
+ *
+ * The `buildOptions(childNodeRunId)` callback yields per-child trigger
+ * options (tags + idempotencyKey) so the caller can include the child's
+ * own NodeRun id in the tag set without dispatcher-side knowledge of how
+ * tags are formatted.
  */
 export async function dispatchReadyChildren(args: {
   workflowRunId: string;
@@ -118,9 +136,13 @@ export async function dispatchReadyChildren(args: {
   completedNodeId: string;
   graph: GraphSnapshot;
   nodeRunIndex: Map<string, { id: string; status: string }>;
-  trigger: (payload: { workflowRunId: string; workflowId: string; nodeRunId: string; nodeId: string }) => Promise<unknown>;
+  trigger: (
+    payload: { workflowRunId: string; workflowId: string; nodeRunId: string; nodeId: string },
+    options: ChildTriggerOptions,
+  ) => Promise<unknown>;
+  buildOptions: (childNodeRunId: string, childNodeId: string) => ChildTriggerOptions;
 }): Promise<void> {
-  const { workflowRunId, workflowId, completedNodeId, graph, nodeRunIndex, trigger } = args;
+  const { workflowRunId, workflowId, completedNodeId, graph, nodeRunIndex, trigger, buildOptions } = args;
   const childIds = (graph.out.get(completedNodeId) ?? []).filter((id) => nodeRunIndex.has(id));
   if (childIds.length === 0) return;
 
@@ -162,12 +184,15 @@ export async function dispatchReadyChildren(args: {
     const claimed = await tryClaimNodeRun(childRun.id);
     if (!claimed) continue;
 
-    await trigger({
-      workflowRunId,
-      workflowId,
-      nodeRunId: childRun.id,
-      nodeId: childId,
-    });
+    await trigger(
+      {
+        workflowRunId,
+        workflowId,
+        nodeRunId: childRun.id,
+        nodeId: childId,
+      },
+      buildOptions(childRun.id, childId),
+    );
   }
 }
 
@@ -305,6 +330,61 @@ export async function markNodeRunFailed(nodeRunId: string, error: string): Promi
       error,
     },
   });
+}
+
+const TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED", "CANCELLED"]);
+
+/**
+ * Atomically finalise the `WorkflowRun` row if (and only if) every
+ * `NodeRun` for this run has reached a terminal status. Called by every
+ * `nodeRunnerTask` invocation after its own status update — success
+ * path, failure path, and the `onFailure` lifecycle hook — and by the
+ * janitor scheduled task as a last-resort safety net.
+ *
+ * Replaces the orchestrator's old `wait.for(3s)` polling loop. The
+ * orchestrator now returns immediately after firing roots; the *last*
+ * NodeRun to reach a terminal state runs this helper and finalises the
+ * run.
+ *
+ * Race-safety: aggregates first, then a single CAS-style `updateMany`
+ * filtered by `status: "RUNNING"`. Multiple concurrent callers can all
+ * pass the "is everything terminal?" check at the same instant; only
+ * one wins the UPDATE (its `count` is `1`); the losers see `count: 0`
+ * and exit silently. Idempotent — safe to call from anywhere.
+ *
+ * @returns `true` iff THIS caller wrote the final WorkflowRun status.
+ */
+export async function tryFinaliseWorkflowRun(workflowRunId: string): Promise<boolean> {
+  const rows = await prisma.nodeRun.findMany({
+    where: { workflowRunId },
+    select: { status: true, error: true },
+  });
+
+  if (rows.length === 0) return false;
+  if (!rows.every((r) => TERMINAL_STATUSES.has(r.status))) return false;
+
+  const failedOrCancelled = rows.filter(
+    (r) => r.status === "FAILED" || r.status === "CANCELLED",
+  ).length;
+  const succeeded = rows.filter((r) => r.status === "SUCCESS").length;
+
+  let finalStatus: "SUCCESS" | "FAILED" | "PARTIAL";
+  if (failedOrCancelled === 0) finalStatus = "SUCCESS";
+  else if (succeeded === 0) finalStatus = "FAILED";
+  else finalStatus = "PARTIAL";
+
+  const firstError = rows.find((r) => r.error)?.error ?? null;
+
+  const claim = await prisma.workflowRun.updateMany({
+    where: { id: workflowRunId, status: "RUNNING" },
+    data: {
+      status: finalStatus,
+      finishedAt: new Date(),
+      error: firstError,
+    },
+  });
+
+  return claim.count === 1;
 }
 
 export type JsonInput = Prisma.InputJsonValue;

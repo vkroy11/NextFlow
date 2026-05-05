@@ -1,5 +1,6 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
 import { prismaExtension } from "@trigger.dev/build/extensions/prisma";
+import { ffmpeg } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   project: process.env.TRIGGER_PROJECT_REF ?? "proj_qcoigvbczcabygdncuqb",
@@ -28,6 +29,10 @@ export default defineConfig({
         // run (see DEPLOYMENT.md step 2).
         directUrlEnvVarName: "POSTGRES_URL",
       }),
+      // apt-installs ffmpeg into the deployed worker image and exports
+      // FFMPEG_PATH=/usr/bin/ffmpeg. No-op in dev — install locally with
+      // `brew install ffmpeg`. Used by src/lib/ffmpegCrop.ts.
+      ffmpeg(),
     ],
   },
 });
