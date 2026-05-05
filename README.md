@@ -26,21 +26,21 @@ Drag nodes onto a React Flow canvas, wire them together, click Run, and watch a 
 
 ## Tech stack
 
-| Layer | Tool |
-| --- | --- |
-| Framework | Next.js 16 (App Router, RSC, Turbopack) |
-| Language | TypeScript (strict) |
-| Database | Prisma Postgres (via Vercel Marketplace) |
-| ORM | Prisma 6 |
-| Auth | Clerk (production instance with custom domain) |
-| Canvas | React Flow 11 + Zustand 5 |
-| Workers | Trigger.dev v4 (cloud) — `tasks`, `auth`, `logger`, `metadata`, `wait`, `AbortTaskRunError` |
-| Live UI updates | `@trigger.dev/react-hooks` (`useRealtimeRunsWithTag`) over SSE |
-| File CDN + image ops | Transloadit |
-| LLM | Google AI Studio (`@google/generative-ai`) |
-| Styling | Tailwind CSS v4 |
-| Validation | Zod |
-| Icons | Lucide |
+| Layer                | Tool                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------- |
+| Framework            | Next.js 16 (App Router, RSC, Turbopack)                                                     |
+| Language             | TypeScript (strict)                                                                         |
+| Database             | Prisma Postgres (via Vercel Marketplace)                                                    |
+| ORM                  | Prisma 6                                                                                    |
+| Auth                 | Clerk (production instance with custom domain)                                              |
+| Canvas               | React Flow 11 + Zustand 5                                                                   |
+| Workers              | Trigger.dev v4 (cloud) — `tasks`, `auth`, `logger`, `metadata`, `wait`, `AbortTaskRunError` |
+| Live UI updates      | `@trigger.dev/react-hooks` (`useRealtimeRunsWithTag`) over SSE                              |
+| File CDN + image ops | Transloadit                                                                                 |
+| LLM                  | Google AI Studio (`@google/generative-ai`)                                                  |
+| Styling              | Tailwind CSS v4                                                                             |
+| Validation           | Zod                                                                                         |
+| Icons                | Lucide                                                                                      |
 
 ---
 
@@ -81,7 +81,7 @@ Three deployments cooperate:
                                                            └──────────────────────────┘
 ```
 
-`run-workflow` is the **orchestrator (setup-only)**: it pre-creates a `NodeRun` row per executable node in `QUEUED`, fire-and-forget triggers root nodes (no parents), and **returns immediately**. There's no poll loop — the *last* node-runner to flip a row to a terminal status calls `tryFinaliseWorkflowRun`, which CAS-updates `WorkflowRun.status = RUNNING → SUCCESS/FAILED/PARTIAL`. A scheduled `workflow-janitor` task (cron `*/5 * * * *`) is the safety net for runs stuck > 10 minutes if a worker crashes in a way that bypasses both its own try/catch and the `onFailure` hook.
+`run-workflow` is the **orchestrator (setup-only)**: it pre-creates a `NodeRun` row per executable node in `QUEUED`, fire-and-forget triggers root nodes (no parents), and **returns immediately**. There's no poll loop — the _last_ node-runner to flip a row to a terminal status calls `tryFinaliseWorkflowRun`, which CAS-updates `WorkflowRun.status = RUNNING → SUCCESS/FAILED/PARTIAL`. A scheduled `workflow-janitor` task (cron `*/5 * * * *`) is the safety net for runs stuck > 10 minutes if a worker crashes in a way that bypasses both its own try/catch and the `onFailure` hook.
 
 `node-runner` is the **universal dispatcher**: one Trigger.dev task that switches on `node.type` and runs the matching worker (`runCropImage` / `runGemini` / `runRequestInputs` / `runInput` / `runResponse`). After success it CAS-checks each child's parents — if all are SUCCESS, it atomic-claims the child row (`updateMany WHERE status=QUEUED`) and fires another `nodeRunnerTask.trigger(...)`, then calls `tryFinaliseWorkflowRun` so the workflow finalises the moment the last leaf finishes. On final-attempt failure the `onFailure` hook fails the row, cascades CANCELLED to descendants, and also calls `tryFinaliseWorkflowRun` so a failure path still terminates the workflow without leaving dead RUNNING rows.
 
@@ -192,7 +192,7 @@ Key visible differences in the "after" flow:
 
 - **Realtime token mint** is one extra Trigger API call before `tasks.trigger` — minted server-side using `TRIGGER_SECRET_KEY`, returned to the browser scoped only to `wfrun:<runId>` for 2 h.
 - **Frontend's `setInterval(fetchRuns, 3000)` is gone** for active runs — `useRealtimeRunsWithTag` opens an SSE connection and pushes updates as Trigger sees them. The browser still hits `/runs` for the rich detail (timestamps, input/output JSON), but only after a Realtime tick (debounced 250 ms), not on a fixed timer.
-- **Orchestrator's `wait.for(3s)` poll loop is gone**. The orchestrator does setup (pre-create rows, fire roots) and **returns immediately**. The *last* node-runner to flip a row to a terminal status calls `tryFinaliseWorkflowRun`, which CAS-updates `WorkflowRun.status = RUNNING → SUCCESS/FAILED/PARTIAL`. Race-safe (Postgres `updateMany` filtered by `status: "RUNNING"` — only one concurrent caller wins). Eliminates ~20 indexed queries per 60 s workflow plus the orchestrator's continuous worker occupation.
+- **Orchestrator's `wait.for(3s)` poll loop is gone**. The orchestrator does setup (pre-create rows, fire roots) and **returns immediately**. The _last_ node-runner to flip a row to a terminal status calls `tryFinaliseWorkflowRun`, which CAS-updates `WorkflowRun.status = RUNNING → SUCCESS/FAILED/PARTIAL`. Race-safe (Postgres `updateMany` filtered by `status: "RUNNING"` — only one concurrent caller wins). Eliminates ~20 indexed queries per 60 s workflow plus the orchestrator's continuous worker occupation.
 - **Janitor scheduled task** (`workflow-janitor`, runs every 5 min via `schedules.task`) replaces the orchestrator's old in-loop watchdog. Scans for `WorkflowRun`s in `RUNNING` for >10 min, force-cancels non-terminal NodeRuns, and calls `tryFinaliseWorkflowRun`. Last-resort safety net for the rare case where a worker crashes in a way that bypasses both its own try/catch and the `onFailure` hook.
 - **Idempotency keys** mean a retried HTTP call (API route) or a retried Trigger attempt (dispatcher) won't double-launch.
 - **Retries with `AbortTaskRunError`** mean transient Transloadit / Gemini hiccups recover automatically (3 attempts, exponential 1 s → 30 s with jitter); permanent 4xx errors short-circuit the policy.
@@ -368,6 +368,7 @@ git push origin main
 ```
 
 Make sure all the env vars from `.env.local` are also set on:
+
 - Vercel (Settings → Environment Variables → Production)
 - Trigger.dev (project → Production env → Environment Variables)
 
@@ -377,7 +378,7 @@ The two services don't share secrets.
 
 ## Notable design decisions
 
-- **Recursive dispatch + last-leaf finalisation** — Trigger v4 forbids multiple pending `triggerAndWait`s on one task, and `batchTriggerAndWait` is atomic at its level boundary (LLM2 had to wait for unrelated crops at the same level). The current shape: orchestrator pre-creates `NodeRun` rows in `QUEUED`, fire-and-forget triggers roots, and **returns immediately**. Each `nodeRunnerTask` cascades to ready children directly via `nodeRunnerTask.trigger(...)` after CAS-claiming the row, and on every exit path calls `tryFinaliseWorkflowRun` — which CAS-updates `WorkflowRun.status` if every NodeRun row is now terminal. The *last* terminal node wins the race; losers no-op. No orchestrator poll loop. See [`docs/dag-concurrency.md`](./docs/dag-concurrency.md) for the full iteration history — the executor evolved through eager-IIFE → strict sequential → per-type batches → mixed-batch → recursive dispatch + 3 s `wait.for` poll, and finally to the current shape (last-leaf finalisation, no poll loop).
+- **Recursive dispatch + last-leaf finalisation** — Trigger v4 forbids multiple pending `triggerAndWait`s on one task, and `batchTriggerAndWait` is atomic at its level boundary (LLM2 had to wait for unrelated crops at the same level). The current shape: orchestrator pre-creates `NodeRun` rows in `QUEUED`, fire-and-forget triggers roots, and **returns immediately**. Each `nodeRunnerTask` cascades to ready children directly via `nodeRunnerTask.trigger(...)` after CAS-claiming the row, and on every exit path calls `tryFinaliseWorkflowRun` — which CAS-updates `WorkflowRun.status` if every NodeRun row is now terminal. The _last_ terminal node wins the race; losers no-op. No orchestrator poll loop. See [`docs/dag-concurrency.md`](./docs/dag-concurrency.md) for the full iteration history — the executor evolved through eager-IIFE → strict sequential → per-type batches → mixed-batch → recursive dispatch + 3 s `wait.for` poll, and finally to the current shape (last-leaf finalisation, no poll loop).
 - **CAS + idempotency keys are layered, not redundant.** Postgres `updateMany WHERE status=QUEUED` gives the immediate `RUNNING` UI transition (sidebar shows "Running" the moment a parent finishes). Trigger.dev `idempotencyKey: wfrun-<id>-node-<nodeId>` dedups the actual scheduling if a future code path or retry bypasses the CAS. Both layers retained.
 - **Trigger.dev Realtime replaces 3 s sidebar polling** — the `/run` route mints `auth.createPublicToken({ scopes: { read: { tags: ["wfrun:<id>"] } }, expirationTime: "2h" })` and ships it to the browser. `useRealtimeRunsWithTag` opens an SSE stream; on each push the sidebar debounces 250 ms then refetches our `/runs` endpoint for the rich detail (timestamps, input/output JSON). The `setInterval(fetchRuns, 5000)` fallback only fires when Realtime is unavailable or the SSE errors.
 - **`onFailure` lifecycle hook is the safety net** for worker crashes outside the worker's own try/catch (OOM, host failure, `maxDuration` timeout). It marks the row `FAILED` + cascades CANCELLED to descendants via `cancelDescendants`. Without it, a crashed worker leaves the row in `RUNNING` until the orchestrator's 600 s watchdog fires.
@@ -393,4 +394,4 @@ The two services don't share secrets.
 
 ## License
 
-MIT.
+MIT .
