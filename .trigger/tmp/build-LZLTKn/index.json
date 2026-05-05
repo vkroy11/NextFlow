@@ -1,5 +1,5 @@
 {
-  "configPath": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/trigger.config.mjs",
+  "configPath": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-LZLTKn/Full stack/NextFlow/trigger.config.mjs",
   "customConditions": [
   ],
   "prompts": [
@@ -14,7 +14,7 @@
   "runtimeVersion": "24.15.0",
   "tasks": [
     {
-      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/src/trigger/nodeRunner.mjs",
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-LZLTKn/Full stack/NextFlow/src/trigger/nodeRunner.mjs",
       "filePath": "src/trigger/nodeRunner.ts",
       "id": "node-runner",
       "maxDuration": 90,
@@ -31,7 +31,7 @@
       }
     },
     {
-      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-LZLTKn/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
       "filePath": "src/trigger/runWorkflow.ts",
       "id": "workflow-janitor",
       "maxDuration": 60,
@@ -49,7 +49,7 @@
       "triggerSource": "schedule"
     },
     {
-      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
+      "entryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-LZLTKn/Full stack/NextFlow/src/trigger/runWorkflow.mjs",
       "filePath": "src/trigger/runWorkflow.ts",
       "id": "run-workflow",
       "maxDuration": 60,
@@ -63,13 +63,13 @@
     }
   ],
   "timings": {
-    "src/trigger/cropImage.ts": 16.10541699999999,
-    "src/trigger/dagDispatch.ts": 1.3442920000001095,
-    "src/trigger/gemini.ts": 1.1213749999999436,
-    "src/trigger/inlineNodes.ts": 1.7508329999998296,
-    "src/trigger/janitor.ts": 2.6783750000001874,
-    "src/trigger/nodeRunner.ts": 375.14920799999993,
-    "src/trigger/runWorkflow.ts": 91.81895800000007
+    "src/trigger/cropImage.ts": 0.6320420000000126,
+    "src/trigger/dagDispatch.ts": 0.2672089999999798,
+    "src/trigger/gemini.ts": 0.33054200000003675,
+    "src/trigger/inlineNodes.ts": 0.23420800000002373,
+    "src/trigger/janitor.ts": 0.2609579999999596,
+    "src/trigger/nodeRunner.ts": 172.602958,
+    "src/trigger/runWorkflow.ts": 39.07970899999998
   },
-  "workerEntryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-YaeqSl/.npm/_npx/f51a09bd0abf5f10/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs"
+  "workerEntryPoint": "/Users/vishalroy/Full stack/NextFlow/.trigger/tmp/build-LZLTKn/.npm/_npx/f51a09bd0abf5f10/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs"
 }

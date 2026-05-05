@@ -1,6 +1,6 @@
 import {
   rethrowClassified
-} from "./chunk-YY3FSV7E.mjs";
+} from "./chunk-JI66NLVW.mjs";
 import {
   external_exports
 } from "./chunk-ZLZOJIGJ.mjs";
@@ -23236,8 +23236,8 @@ var require_graceful_fs = __commonJS({
       fs2.createReadStream = createReadStream2;
       fs2.createWriteStream = createWriteStream;
       var fs$readFile = fs2.readFile;
-      fs2.readFile = readFile;
-      function readFile(path2, options, cb) {
+      fs2.readFile = readFile2;
+      function readFile2(path2, options, cb) {
         if (typeof options === "function")
           cb = options, options = null;
         return go$readFile(path2, options, cb);
@@ -23253,10 +23253,10 @@ var require_graceful_fs = __commonJS({
         }
         __name(go$readFile, "go$readFile");
       }
-      __name(readFile, "readFile");
+      __name(readFile2, "readFile");
       var fs$writeFile = fs2.writeFile;
-      fs2.writeFile = writeFile2;
-      function writeFile2(path2, data, options, cb) {
+      fs2.writeFile = writeFile3;
+      function writeFile3(path2, data, options, cb) {
         if (typeof options === "function")
           cb = options, options = null;
         return go$writeFile(path2, data, options, cb);
@@ -23272,7 +23272,7 @@ var require_graceful_fs = __commonJS({
         }
         __name(go$writeFile, "go$writeFile");
       }
-      __name(writeFile2, "writeFile");
+      __name(writeFile3, "writeFile");
       var fs$appendFile = fs2.appendFile;
       if (fs$appendFile)
         fs2.appendFile = appendFile;
@@ -24873,6 +24873,14 @@ var require_node2 = __commonJS({
 
 // src/trigger/cropImage.ts
 init_esm();
+
+// src/lib/ffmpegCrop.ts
+init_esm();
+import { execFile } from "node:child_process";
+import { promisify as promisify4 } from "node:util";
+import { mkdtemp, readFile, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join2 } from "node:path";
 
 // src/lib/transloadit.ts
 init_esm();
@@ -47069,72 +47077,137 @@ function client() {
   return _client;
 }
 __name(client, "client");
-async function cropImageViaTransloadit(input) {
+async function uploadBufferToTransloadit(buf, filename, _contentType) {
   const c3 = client();
-  const isDataUrl = input.inputUrl.startsWith("data:");
-  const cropStep = {
-    robot: "/image/resize",
-    // Source step name differs by branch — see below.
-    use: isDataUrl ? ":original" : "imported",
-    format: "jpg",
-    imagemagick_stack: "v3.0.0",
-    crop: {
-      x1: `${input.x}%`,
-      y1: `${input.y}%`,
-      x2: `${input.x + input.w}%`,
-      y2: `${input.y + input.h}%`
-    }
-  };
-  let tmpPath = null;
+  const safeName = (filename || "upload").replace(/[^a-zA-Z0-9._-]/g, "_");
+  const tmpPath = join(
+    tmpdir(),
+    `nf-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`
+  );
+  await writeFile(tmpPath, buf);
   try {
-    let result;
-    if (isDataUrl) {
-      const commaIdx = input.inputUrl.indexOf(",");
-      if (commaIdx === -1) throw new Error("malformed data url");
-      const meta94 = input.inputUrl.slice(0, commaIdx);
-      const b64 = input.inputUrl.slice(commaIdx + 1);
-      const ext = /data:image\/([a-zA-Z0-9.+-]+)/.exec(meta94)?.[1]?.split(";")[0] ?? "jpg";
-      const buf = Buffer.from(b64, "base64");
-      tmpPath = join(
-        tmpdir(),
-        `nf-crop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-      );
-      await writeFile(tmpPath, buf);
-      result = await c3.createAssembly({
-        files: { input: tmpPath },
-        params: {
-          steps: {
-            ":original": {
-              robot: "/upload/handle"
-            },
-            cropped: cropStep
+    const result = await c3.createAssembly({
+      files: { file: tmpPath },
+      params: {
+        steps: {
+          ":original": {
+            robot: "/upload/handle"
           }
-        },
-        waitForCompletion: true
-      });
-    } else {
-      result = await c3.createAssembly({
-        params: {
-          steps: {
-            imported: {
-              robot: "/http/import",
-              url: input.inputUrl
-            },
-            cropped: cropStep
-          }
-        },
-        waitForCompletion: true
-      });
-    }
-    const url = result?.results?.cropped?.[0]?.ssl_url ?? result?.results?.cropped?.[0]?.url;
-    if (!url) throw new Error(`Transloadit crop produced no output url (assembly ${result?.assembly_id})`);
+        }
+      },
+      waitForCompletion: true
+    });
+    const url = result?.uploads?.[0]?.ssl_url ?? result?.results?.[":original"]?.[0]?.ssl_url;
+    if (!url) throw new Error("Transloadit upload returned no url");
     return { url, assemblyId: result.assembly_id ?? "" };
   } finally {
-    if (tmpPath) await unlink(tmpPath).catch(() => {
+    await unlink(tmpPath).catch(() => {
     });
   }
 }
-__name(cropImageViaTransloadit, "cropImageViaTransloadit");
+__name(uploadBufferToTransloadit, "uploadBufferToTransloadit");
+
+// src/lib/ffmpegCrop.ts
+var execFileP = promisify4(execFile);
+var FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
+async function cropImageViaFfmpeg(input) {
+  const workdir = await mkdtemp(join2(tmpdir2(), "nf-ffcrop-"));
+  const inExt = inferImageExtension(input.inputUrl);
+  const inPath = join2(workdir, `in.${inExt}`);
+  const vidPath = join2(workdir, "video.mp4");
+  const cropPath = join2(workdir, "cropped.mp4");
+  const outPath = join2(workdir, "out.jpg");
+  try {
+    await fetchToFile(input.inputUrl, inPath);
+    await runFfmpeg([
+      "-y",
+      "-loop",
+      "1",
+      "-i",
+      inPath,
+      "-frames:v",
+      "1",
+      "-t",
+      "1",
+      "-c:v",
+      "mpeg4",
+      "-q:v",
+      "2",
+      "-pix_fmt",
+      "yuv420p",
+      vidPath
+    ]);
+    const cropExpr = `crop=iw*${input.w}/100:ih*${input.h}/100:iw*${input.x}/100:ih*${input.y}/100`;
+    await runFfmpeg([
+      "-y",
+      "-i",
+      vidPath,
+      "-vf",
+      cropExpr,
+      "-frames:v",
+      "1",
+      "-c:v",
+      "mpeg4",
+      "-q:v",
+      "2",
+      "-pix_fmt",
+      "yuv420p",
+      cropPath
+    ]);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      cropPath,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      outPath
+    ]);
+    const buf = await readFile(outPath);
+    const { url } = await uploadBufferToTransloadit(buf, "cropped.jpg", "image/jpeg");
+    return { url };
+  } finally {
+    await rm(workdir, { recursive: true, force: true }).catch(() => {
+    });
+  }
+}
+__name(cropImageViaFfmpeg, "cropImageViaFfmpeg");
+async function runFfmpeg(args) {
+  try {
+    await execFileP(FFMPEG, args, { timeout: 6e4, maxBuffer: 16 * 1024 * 1024 });
+  } catch (err) {
+    const stderr = err.stderr;
+    const tail = (typeof stderr === "string" ? stderr : stderr?.toString("utf8") ?? "").split("\n").slice(-12).join("\n");
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`ffmpeg failed: ${msg}
+${tail}`);
+  }
+}
+__name(runFfmpeg, "runFfmpeg");
+async function fetchToFile(url, dest) {
+  if (url.startsWith("data:")) {
+    const comma = url.indexOf(",");
+    if (comma === -1) throw new Error("malformed data url");
+    await writeFile2(dest, Buffer.from(url.slice(comma + 1), "base64"));
+    return;
+  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch input: ${res.status} ${res.statusText}`);
+  await writeFile2(dest, Buffer.from(await res.arrayBuffer()));
+}
+__name(fetchToFile, "fetchToFile");
+function inferImageExtension(url) {
+  if (url.startsWith("data:")) {
+    const meta94 = url.slice(0, url.indexOf(",")) || "";
+    const m2 = /data:image\/([a-zA-Z0-9.+-]+)/.exec(meta94);
+    return (m2?.[1]?.split(";")[0] ?? "jpg").toLowerCase();
+  }
+  const m = /\.([a-zA-Z0-9]{2,5})(?:[?#]|$)/.exec(url);
+  const ext = (m?.[1] ?? "jpg").toLowerCase();
+  return /^(jpg|jpeg|png|webp|gif|bmp|tiff)$/.test(ext) ? ext : "jpg";
+}
+__name(inferImageExtension, "inferImageExtension");
 
 // src/trigger/cropImage.ts
 var ARTIFICIAL_DELAY_MS = 3e4;
@@ -47162,7 +47235,7 @@ async function runCropImage(payload) {
     }
   });
   try {
-    const { url } = await cropImageViaTransloadit({
+    const { url } = await cropImageViaFfmpeg({
       inputUrl: payload.inputUrl,
       x: payload.x,
       y: payload.y,
@@ -47230,4 +47303,4 @@ tus-js-client/lib.es5/node/sources/FileSource.js:
 tus-js-client/lib.es5/node/sources/StreamSource.js:
   (*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/facebook/regenerator/blob/main/LICENSE *)
 */
-//# sourceMappingURL=chunk-UPLB75XL.mjs.map
+//# sourceMappingURL=chunk-IBJHBBHH.mjs.map

@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../../../trigger.config.ts"],
+  "sourcesContent": ["import { defineConfig } from \"@trigger.dev/sdk/v3\";\nimport { prismaExtension } from \"@trigger.dev/build/extensions/prisma\";\nimport { ffmpeg } from \"@trigger.dev/build/extensions/core\";\n\nexport default defineConfig({\n  project: process.env.TRIGGER_PROJECT_REF ?? \"proj_qcoigvbczcabygdncuqb\",\n  runtime: \"node\",\n  logLevel: \"log\",\n  maxDuration: 600,\n  retries: {\n    enabledInDev: false,\n    default: { maxAttempts: 1, factor: 1, minTimeoutInMs: 1000, maxTimeoutInMs: 1000, randomize: false },\n  },\n  dirs: [\"./src/trigger\"],\n  build: {},\n});\nexport const resolveEnvVars = undefined;"],
+  "mappings": ";;;;;;;;;AAAA;AAIA,IAAO,yBAAQ,aAAa;AAAA,EAC1B,SAAS,QAAQ,IAAI,uBAAuB;AAAA,EAC5C,SAAS;AAAA,EACT,UAAU;AAAA,EACV,aAAa;AAAA,EACb,SAAS;AAAA,IACP,cAAc;AAAA,IACd,SAAS,EAAE,aAAa,GAAG,QAAQ,GAAG,gBAAgB,KAAM,gBAAgB,KAAM,WAAW,MAAM;AAAA,EACrG;AAAA,EACA,MAAM,CAAC,eAAe;AAAA,EACtB,OAAO,CAAC;AACV,CAAC;AACM,IAAM,iBAAiB;",
+  "names": []
+}

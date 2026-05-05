@@ -30,6 +30,12 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /INVALID_UPLOAD_HANDLE/i,
   /GET_ACCOUNT_UNKNOWN_AUTH_KEY/i,
   /TRANSLOADIT_AUTH_KEY missing/i,
+
+  // ffmpeg permanent errors (malformed input, missing codec, bad crop box)
+  /\bInvalid argument\b/i,
+  /\bNo such file or directory\b/i,
+  /\bUnable to find a suitable output format\b/i,
+  /\bcrop area .* outside\b/i,
 ];
 
 export function isPermanentError(err: unknown): boolean {

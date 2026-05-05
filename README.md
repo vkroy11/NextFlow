@@ -4,7 +4,7 @@ A pixel-perfect clone of [Galaxy.ai](https://galaxy.ai)'s workflow builder, focu
 
 > 🌐 **Live**: [next-flow.vishalkumarroy.xyz](https://next-flow.vishalkumarroy.xyz/)
 
-Drag nodes onto a React Flow canvas, wire them together, click Run, and watch a real DAG execute on Trigger.dev workers — Gemini calls, Transloadit-backed image cropping, type-safe edges, history sidebar, the whole thing.
+Drag nodes onto a React Flow canvas, wire them together, click Run, and watch a real DAG execute on Trigger.dev workers — Gemini calls, ffmpeg-backed image cropping, type-safe edges, history sidebar, the whole thing.
 
 ---
 
@@ -17,7 +17,7 @@ Drag nodes onto a React Flow canvas, wire them together, click Run, and watch a 
 - **Live history sidebar via Trigger.dev Realtime** — frontend subscribes to `wfrun:<id>` via `useRealtimeRunsWithTag` with a server-minted `publicAccessToken`. Updates push over SSE; the sidebar refetches our `/runs` endpoint (debounced) for the rich detail (timestamps, input/output JSON, errors). 5 s polling fallback when the SSE stream errors or the token mint failed.
 - **Type-safe connections** — text/number/boolean/image/audio/video/file handles, colour-coded across the canvas (orange = text, pink = number, cyan = image, indigo = video, violet = audio, zinc = file, green/orange for response/result). Edges preview their type colour while dragging.
 - **First-class file uploads** — anything dropped on a node hits Transloadit immediately. Workflow JSON in Postgres only stores compact CDN URLs, never base64 blobs.
-- **Image cropping** — Crop nodes call Transloadit's `/image/resize` robot with a percentage geometry box. Live cutout overlay on the input image preview reflects the slider values in real time.
+- **Image cropping** — Crop nodes run **ffmpeg inside the Trigger.dev worker** via the `ffmpeg()` build extension. A percentage geometry box (x/y/w/h, 0-100) is fed to ffmpeg's `crop=iw*W/100:ih*H/100:iw*X/100:ih*Y/100` filter. Cropped JPEG is published through Transloadit's `/upload/handle` to keep the same `{ url }` contract for downstream nodes. Live cutout overlay on the input image preview reflects the slider values in real time.
 - **Per-node + full-flow Run** — kick off a single node or the whole DAG. Run buttons cross-disable while any run is in flight so you can't queue competing runs. Optimistic local state means the spinner shows the moment you click, not after Trigger.dev's worker picks up the task.
 
 ---
@@ -345,7 +345,7 @@ docs/
 └─ dag-concurrency.md         postmortem + design doc on the executor
 
 DEPLOYMENT.md                 Vercel + Trigger.dev + Clerk runbook
-trigger.config.ts             Trigger.dev build config (prismaExtension)
+trigger.config.ts             Trigger.dev build config (prismaExtension + ffmpeg)
 ```
 
 ---
@@ -379,10 +379,10 @@ The two services don't share secrets.
 - **CAS + idempotency keys are layered, not redundant.** Postgres `updateMany WHERE status=QUEUED` gives the immediate `RUNNING` UI transition (sidebar shows "Running" the moment a parent finishes). Trigger.dev `idempotencyKey: wfrun-<id>-node-<nodeId>` dedups the actual scheduling if a future code path or retry bypasses the CAS. Both layers retained.
 - **Trigger.dev Realtime replaces 3 s sidebar polling** — the `/run` route mints `auth.createPublicToken({ scopes: { read: { tags: ["wfrun:<id>"] } }, expirationTime: "2h" })` and ships it to the browser. `useRealtimeRunsWithTag` opens an SSE stream; on each push the sidebar debounces 250 ms then refetches our `/runs` endpoint for the rich detail (timestamps, input/output JSON). The `setInterval(fetchRuns, 5000)` fallback only fires when Realtime is unavailable or the SSE errors.
 - **`onFailure` lifecycle hook is the safety net** for worker crashes outside the worker's own try/catch (OOM, host failure, `maxDuration` timeout). It marks the row `FAILED` + cascades CANCELLED to descendants via `cancelDescendants`. Without it, a crashed worker leaves the row in `RUNNING` until the orchestrator's 600 s watchdog fires.
-- **Retries with `AbortTaskRunError`** — `nodeRunnerTask` retries 3× (factor 2, 1 s → 30 s with jitter) for transient failures. `cropImage` / `gemini` workers wrap external errors via `rethrowClassified`: validation / auth / 4xx → `AbortTaskRunError` (short-circuit retries), network / 5xx / rate-limit → rethrow as-is (full retry). SUCCESS-guard at the top of each worker reads the row first; if it's already `SUCCESS` with output present, the worker returns early — keeps retries idempotent without redoing the (paid) Transloadit + Gemini round-trip or the 30 s artificial delay.
+- **Retries with `AbortTaskRunError`** — `nodeRunnerTask` retries 3× (factor 2, 1 s → 30 s with jitter) for transient failures. `cropImage` / `gemini` workers wrap external errors via `rethrowClassified`: validation / auth / 4xx (and now permanent ffmpeg errors like `Invalid argument` / `crop area outside`) → `AbortTaskRunError` (short-circuit retries), network / 5xx / rate-limit → rethrow as-is (full retry). SUCCESS-guard at the top of each worker reads the row first; if it's already `SUCCESS` with output present, the worker returns early — keeps retries idempotent without redoing the ffmpeg pipeline + (paid) Transloadit upload + Gemini round-trip or the 30 s artificial delay.
 - **Single `node-execution` queue with concurrency cap** — even a 50-node fan-out can't trip Transloadit / Gemini per-account rate limits. `concurrencyLimit` is `NODE_RUNNER_CONCURRENCY` env-var, defaulting to 5 in dev and 20 in prod.
-- **Image cropping uses Transloadit's `/image/resize` (ImageMagick), not `/video/encode` (FFmpeg).** `/video/encode` is FFmpeg-backed and the natural fit for an "FFmpeg crop", but it trips `VIDEO_ENCODE_VALIDATION` on most preset combinations for image inputs. ImageMagick is the platform-native path for image crops.
-- **Mandatory 30 s artificial delay on Crop** is preserved (PRD requirement). It lives inside `runCropImage`, after the Transloadit assembly resolves and before writing the row to `SUCCESS` — so the SUCCESS-guard correctly skips it on retry.
+- **Image cropping runs ffmpeg inside the Trigger.dev worker (not Transloadit's image robot).** The `ffmpeg()` build extension from `@trigger.dev/build/extensions/core` apt-installs ffmpeg into the deployed worker image and exports `FFMPEG_PATH=/usr/bin/ffmpeg`. `src/lib/ffmpegCrop.ts` does the work: download input → 1-frame mp4 (`-loop 1 -frames:v 1 -c:v mpeg4`) → ffmpeg `crop=…` filter → mp4 → jpg → upload via Transloadit's `/upload/handle`. The image-→video-→image hop is a deliberate workaround per the PRD's "use ffmpeg" mandate; ffmpeg can crop stills directly, but the round-trip is the spec'd shape. `mpeg4` codec was picked over `libx264` because it's in every stock ffmpeg build (no licensing dependency on the deploy image). Earlier attempts to use Transloadit's `/video/encode` robot for an in-platform "FFmpeg crop" tripped `VIDEO_ENCODE_VALIDATION` on image inputs — running ffmpeg ourselves sidesteps that entirely.
+- **Mandatory 30 s artificial delay on Crop** is preserved (PRD requirement). It lives inside `runCropImage`, after the ffmpeg crop + Transloadit upload resolve and before writing the row to `SUCCESS` — so the SUCCESS-guard correctly skips it on retry.
 - **Every node type goes through `nodeRunnerTask` now** — `runRequestInputs` / `runInput` / `runResponse` are plain async worker functions in `inlineNodes.ts` invoked from the dispatcher just like `runCropImage` / `runGemini`. The History sidebar still shows `nodeType: "cropImage" | "gemini" | "requestInputs" | "input" | "response"` rows (named workers write the `NodeRun`); `node-runner` itself never writes to `NodeRun`, so the sidebar stays free of dispatcher noise. Trigger.dev's cloud dashboard surfaces every `node-runner` invocation for debugging.
 - **Files never live as base64 in Postgres**. Every upload streams through `/api/uploads` → Transloadit → CDN URL stored on the node. Workflow JSON stays in the kilobyte range.
 

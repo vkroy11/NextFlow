@@ -1,4 +1,4 @@
-import { cropImageViaTransloadit } from "@/lib/transloadit";
+import { cropImageViaFfmpeg } from "@/lib/ffmpegCrop";
 import { prisma } from "@/lib/prisma";
 import { rethrowClassified } from "@/lib/triggerErrors";
 
@@ -66,7 +66,7 @@ export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
   });
 
   try {
-    const { url } = await cropImageViaTransloadit({
+    const { url } = await cropImageViaFfmpeg({
       inputUrl: payload.inputUrl,
       x: payload.x,
       y: payload.y,

@@ -23,7 +23,12 @@ var PERMANENT_PATTERNS = [
   /HTTP_IMPORT_VALIDATION/i,
   /INVALID_UPLOAD_HANDLE/i,
   /GET_ACCOUNT_UNKNOWN_AUTH_KEY/i,
-  /TRANSLOADIT_AUTH_KEY missing/i
+  /TRANSLOADIT_AUTH_KEY missing/i,
+  // ffmpeg permanent errors (malformed input, missing codec, bad crop box)
+  /\bInvalid argument\b/i,
+  /\bNo such file or directory\b/i,
+  /\bUnable to find a suitable output format\b/i,
+  /\bcrop area .* outside\b/i
 ];
 function isPermanentError(err) {
   const msg = err instanceof Error ? err.message : String(err);
@@ -42,4 +47,4 @@ __name(rethrowClassified, "rethrowClassified");
 export {
   rethrowClassified
 };
-//# sourceMappingURL=chunk-YY3FSV7E.mjs.map
+//# sourceMappingURL=chunk-JI66NLVW.mjs.map
