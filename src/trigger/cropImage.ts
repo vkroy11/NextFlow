@@ -1,4 +1,5 @@
-import { cropImageViaFfmpeg } from "@/lib/ffmpegCrop";
+import { cropImageToBuffer } from "@/lib/ffmpegCrop";
+import { uploadBufferToTransloadit } from "@/lib/transloadit";
 import { prisma } from "@/lib/prisma";
 import { rethrowClassified } from "@/lib/triggerErrors";
 
@@ -17,8 +18,11 @@ export type CropOutput = { url: string };
 
 /**
  * PRD §"MANDATORY 30+ second artificial delay on Crop Image":
- * after the FFmpeg crop resolves, await at least 30 seconds before returning.
- * Hard requirement — do not skip.
+ * total wall-clock from worker start to SUCCESS must be at least 30 s.
+ * The PRD only specifies the floor — not when the timer starts — so we
+ * pipeline the (paid, ~5-10 s) Transloadit upload in parallel with the
+ * delay rather than after it. Net wall-clock ≈ max(30 s, upload), not
+ * 30 s + upload. Hard requirement — do not skip.
  */
 const ARTIFICIAL_DELAY_MS = 30_000;
 
@@ -66,7 +70,7 @@ export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
   });
 
   try {
-    const { url } = await cropImageViaFfmpeg({
+    const buf = await cropImageToBuffer({
       inputUrl: payload.inputUrl,
       x: payload.x,
       y: payload.y,
@@ -74,8 +78,14 @@ export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
       h: payload.h,
     });
 
-    // MANDATORY artificial delay (PRD requirement, do not remove).
-    await new Promise((r) => setTimeout(r, ARTIFICIAL_DELAY_MS));
+    // Pipeline the upload alongside the mandatory 30 s delay (PRD says
+    // "at least 30 s", not "30 s after upload"). Promise.all rejects fast
+    // on upload failure so the FAILED branch fires immediately instead
+    // of waiting out the delay on a doomed run.
+    const [{ url }] = await Promise.all([
+      uploadBufferToTransloadit(buf, "cropped.jpg", "image/jpeg"),
+      new Promise<void>((r) => setTimeout(r, ARTIFICIAL_DELAY_MS)),
+    ]);
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({

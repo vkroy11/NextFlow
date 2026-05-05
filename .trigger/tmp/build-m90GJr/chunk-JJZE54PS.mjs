@@ -24877,10 +24877,74 @@ init_esm();
 // src/lib/ffmpegCrop.ts
 init_esm();
 import { execFile } from "node:child_process";
-import { promisify as promisify4 } from "node:util";
-import { mkdtemp, readFile, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir as tmpdir2 } from "node:os";
-import { join as join2 } from "node:path";
+import { promisify } from "node:util";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+var execFileP = promisify(execFile);
+var FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
+async function cropImageToBuffer(input) {
+  const workdir = await mkdtemp(join(tmpdir(), "nf-ffcrop-"));
+  const inExt = inferImageExtension(input.inputUrl);
+  const inPath = join(workdir, `in.${inExt}`);
+  const outPath = join(workdir, "out.jpg");
+  try {
+    await fetchToFile(input.inputUrl, inPath);
+    const cropExpr = `crop=iw*${input.w}/100:ih*${input.h}/100:iw*${input.x}/100:ih*${input.y}/100`;
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      cropExpr,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      outPath
+    ]);
+    return await readFile(outPath);
+  } finally {
+    await rm(workdir, { recursive: true, force: true }).catch(() => {
+    });
+  }
+}
+__name(cropImageToBuffer, "cropImageToBuffer");
+async function runFfmpeg(args) {
+  try {
+    await execFileP(FFMPEG, args, { timeout: 6e4, maxBuffer: 16 * 1024 * 1024 });
+  } catch (err) {
+    const stderr = err.stderr;
+    const tail = (typeof stderr === "string" ? stderr : stderr?.toString("utf8") ?? "").split("\n").slice(-12).join("\n");
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`ffmpeg failed: ${msg}
+${tail}`);
+  }
+}
+__name(runFfmpeg, "runFfmpeg");
+async function fetchToFile(url, dest) {
+  if (url.startsWith("data:")) {
+    const comma = url.indexOf(",");
+    if (comma === -1) throw new Error("malformed data url");
+    await writeFile(dest, Buffer.from(url.slice(comma + 1), "base64"));
+    return;
+  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch input: ${res.status} ${res.statusText}`);
+  await writeFile(dest, Buffer.from(await res.arrayBuffer()));
+}
+__name(fetchToFile, "fetchToFile");
+function inferImageExtension(url) {
+  if (url.startsWith("data:")) {
+    const meta94 = url.slice(0, url.indexOf(",")) || "";
+    const m2 = /data:image\/([a-zA-Z0-9.+-]+)/.exec(meta94);
+    return (m2?.[1]?.split(";")[0] ?? "jpg").toLowerCase();
+  }
+  const m = /\.([a-zA-Z0-9]{2,5})(?:[?#]|$)/.exec(url);
+  const ext = (m?.[1] ?? "jpg").toLowerCase();
+  return /^(jpg|jpeg|png|webp|gif|bmp|tiff)$/.test(ext) ? ext : "jpg";
+}
+__name(inferImageExtension, "inferImageExtension");
 
 // src/lib/transloadit.ts
 init_esm();
@@ -28095,7 +28159,7 @@ getContentLength_fn = /* @__PURE__ */ __name(function() {
 // node_modules/got/dist/source/core/utils/get-body-size.js
 init_esm();
 import { Buffer as Buffer2 } from "node:buffer";
-import { promisify } from "node:util";
+import { promisify as promisify2 } from "node:util";
 
 // node_modules/got/dist/source/core/utils/is-form-data.js
 init_esm();
@@ -28119,7 +28183,7 @@ async function getBodySize(body, headers) {
     return body.length;
   }
   if (isFormData3(body)) {
-    return promisify(body.getLength.bind(body))();
+    return promisify2(body.getLength.bind(body))();
   }
   return void 0;
 }
@@ -28390,7 +28454,7 @@ var calculate_retry_delay_default = calculateRetryDelay;
 // node_modules/got/dist/source/core/options.js
 init_esm();
 import process2 from "node:process";
-import { promisify as promisify3, inspect } from "node:util";
+import { promisify as promisify4, inspect } from "node:util";
 import { checkServerIdentity } from "node:tls";
 import https from "node:https";
 import http from "node:http";
@@ -28404,7 +28468,7 @@ import {
   promises as dnsPromises,
   lookup as dnsLookup
 } from "node:dns";
-import { promisify as promisify2 } from "node:util";
+import { promisify as promisify3 } from "node:util";
 import os from "node:os";
 var { Resolver: AsyncResolver } = dnsPromises;
 var kCacheableLookupCreateConnection = Symbol("cacheableLookupCreateConnection");
@@ -28476,7 +28540,7 @@ var CacheableLookup = class {
     this.errorTtl = errorTtl;
     this._cache = cache;
     this._resolver = resolver;
-    this._dnsLookup = lookup && promisify2(lookup);
+    this._dnsLookup = lookup && promisify3(lookup);
     this.stats = {
       cache: 0,
       query: 0
@@ -28485,8 +28549,8 @@ var CacheableLookup = class {
       this._resolve4 = this._resolver.resolve4.bind(this._resolver);
       this._resolve6 = this._resolver.resolve6.bind(this._resolver);
     } else {
-      this._resolve4 = promisify2(this._resolver.resolve4.bind(this._resolver));
-      this._resolve6 = promisify2(this._resolver.resolve6.bind(this._resolver));
+      this._resolve4 = promisify3(this._resolver.resolve4.bind(this._resolver));
+      this._resolve6 = promisify3(this._resolver.resolve6.bind(this._resolver));
     }
     this._iface = getIfaceInfo();
     this._pending = {};
@@ -29486,8 +29550,8 @@ var Options = class _Options {
     assert.function(setCookie);
     assert.function(getCookieString);
     if (setCookie.length === 4 && getCookieString.length === 0) {
-      setCookie = promisify3(setCookie.bind(value));
-      getCookieString = promisify3(getCookieString.bind(value));
+      setCookie = promisify4(setCookie.bind(value));
+      getCookieString = promisify4(getCookieString.bind(value));
       this._internals.cookieJar = {
         setCookie,
         getCookieString
@@ -47062,9 +47126,9 @@ ${parsedResult.humanReadable}`);
 };
 
 // src/lib/transloadit.ts
-import { writeFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { writeFile as writeFile2, unlink } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join2 } from "node:path";
 var _client = null;
 function client() {
   if (_client) return _client;
@@ -47080,11 +47144,11 @@ __name(client, "client");
 async function uploadBufferToTransloadit(buf, filename, _contentType) {
   const c3 = client();
   const safeName = (filename || "upload").replace(/[^a-zA-Z0-9._-]/g, "_");
-  const tmpPath = join(
-    tmpdir(),
+  const tmpPath = join2(
+    tmpdir2(),
     `nf-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`
   );
-  await writeFile(tmpPath, buf);
+  await writeFile2(tmpPath, buf);
   try {
     const result = await c3.createAssembly({
       files: { file: tmpPath },
@@ -47106,108 +47170,6 @@ async function uploadBufferToTransloadit(buf, filename, _contentType) {
   }
 }
 __name(uploadBufferToTransloadit, "uploadBufferToTransloadit");
-
-// src/lib/ffmpegCrop.ts
-var execFileP = promisify4(execFile);
-var FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
-async function cropImageViaFfmpeg(input) {
-  const workdir = await mkdtemp(join2(tmpdir2(), "nf-ffcrop-"));
-  const inExt = inferImageExtension(input.inputUrl);
-  const inPath = join2(workdir, `in.${inExt}`);
-  const vidPath = join2(workdir, "video.mp4");
-  const cropPath = join2(workdir, "cropped.mp4");
-  const outPath = join2(workdir, "out.jpg");
-  try {
-    await fetchToFile(input.inputUrl, inPath);
-    await runFfmpeg([
-      "-y",
-      "-loop",
-      "1",
-      "-i",
-      inPath,
-      "-frames:v",
-      "1",
-      "-t",
-      "1",
-      "-c:v",
-      "mpeg4",
-      "-q:v",
-      "2",
-      "-pix_fmt",
-      "yuv420p",
-      vidPath
-    ]);
-    const cropExpr = `crop=iw*${input.w}/100:ih*${input.h}/100:iw*${input.x}/100:ih*${input.y}/100`;
-    await runFfmpeg([
-      "-y",
-      "-i",
-      vidPath,
-      "-vf",
-      cropExpr,
-      "-frames:v",
-      "1",
-      "-c:v",
-      "mpeg4",
-      "-q:v",
-      "2",
-      "-pix_fmt",
-      "yuv420p",
-      cropPath
-    ]);
-    await runFfmpeg([
-      "-y",
-      "-i",
-      cropPath,
-      "-frames:v",
-      "1",
-      "-q:v",
-      "2",
-      outPath
-    ]);
-    const buf = await readFile(outPath);
-    const { url } = await uploadBufferToTransloadit(buf, "cropped.jpg", "image/jpeg");
-    return { url };
-  } finally {
-    await rm(workdir, { recursive: true, force: true }).catch(() => {
-    });
-  }
-}
-__name(cropImageViaFfmpeg, "cropImageViaFfmpeg");
-async function runFfmpeg(args) {
-  try {
-    await execFileP(FFMPEG, args, { timeout: 6e4, maxBuffer: 16 * 1024 * 1024 });
-  } catch (err) {
-    const stderr = err.stderr;
-    const tail = (typeof stderr === "string" ? stderr : stderr?.toString("utf8") ?? "").split("\n").slice(-12).join("\n");
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`ffmpeg failed: ${msg}
-${tail}`);
-  }
-}
-__name(runFfmpeg, "runFfmpeg");
-async function fetchToFile(url, dest) {
-  if (url.startsWith("data:")) {
-    const comma = url.indexOf(",");
-    if (comma === -1) throw new Error("malformed data url");
-    await writeFile2(dest, Buffer.from(url.slice(comma + 1), "base64"));
-    return;
-  }
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetch input: ${res.status} ${res.statusText}`);
-  await writeFile2(dest, Buffer.from(await res.arrayBuffer()));
-}
-__name(fetchToFile, "fetchToFile");
-function inferImageExtension(url) {
-  if (url.startsWith("data:")) {
-    const meta94 = url.slice(0, url.indexOf(",")) || "";
-    const m2 = /data:image\/([a-zA-Z0-9.+-]+)/.exec(meta94);
-    return (m2?.[1]?.split(";")[0] ?? "jpg").toLowerCase();
-  }
-  const m = /\.([a-zA-Z0-9]{2,5})(?:[?#]|$)/.exec(url);
-  const ext = (m?.[1] ?? "jpg").toLowerCase();
-  return /^(jpg|jpeg|png|webp|gif|bmp|tiff)$/.test(ext) ? ext : "jpg";
-}
-__name(inferImageExtension, "inferImageExtension");
 
 // src/trigger/cropImage.ts
 var ARTIFICIAL_DELAY_MS = 3e4;
@@ -47235,14 +47197,17 @@ async function runCropImage(payload) {
     }
   });
   try {
-    const { url } = await cropImageViaFfmpeg({
+    const buf = await cropImageToBuffer({
       inputUrl: payload.inputUrl,
       x: payload.x,
       y: payload.y,
       w: payload.w,
       h: payload.h
     });
-    await new Promise((r) => setTimeout(r, ARTIFICIAL_DELAY_MS));
+    const [{ url }] = await Promise.all([
+      uploadBufferToTransloadit(buf, "cropped.jpg", "image/jpeg"),
+      new Promise((r) => setTimeout(r, ARTIFICIAL_DELAY_MS))
+    ]);
     const finishedAt = /* @__PURE__ */ new Date();
     await prisma.nodeRun.update({
       where: { id: payload.nodeRunId },
@@ -47303,4 +47268,4 @@ tus-js-client/lib.es5/node/sources/FileSource.js:
 tus-js-client/lib.es5/node/sources/StreamSource.js:
   (*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/facebook/regenerator/blob/main/LICENSE *)
 */
-//# sourceMappingURL=chunk-IBJHBBHH.mjs.map
+//# sourceMappingURL=chunk-JJZE54PS.mjs.map
