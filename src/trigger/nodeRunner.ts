@@ -34,7 +34,7 @@ export function buildNodeRunnerTags(args: {
   workflowRunId: string;
   nodeRunId: string;
   // Canvas (React Flow) node id and node type are also tagged so the
-  // browser's `GeminiStreamCoordinator` can pick the right run out of a
+  // browser's `RealtimeCoordinator` can pick the right run out of a
   // `useRealtimeRunsWithTag('wfrun:<id>')` subscription and key its
   // streamed text by canvas nodeId without an extra DB lookup.
   nodeId: string;

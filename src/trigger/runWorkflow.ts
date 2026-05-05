@@ -183,7 +183,7 @@ export const runWorkflowTask = task({
       // (see `buildChildTriggerOptions` in `nodeRunner.ts`) so root and
       // descendant triggers wear identical metadata. Frontend Realtime
       // subscribes via `wfrun:<id>`; the `nodeId:<canvasId>` and
-      // `kind:<type>` tags let `GeminiStreamCoordinator` pick gemini
+      // `kind:<type>` tags let `RealtimeCoordinator` pick gemini
       // runs out of that subscription. Idempotency-key shape is
       // `wfrun-<id>-node-<nodeId>` and dedups any redundant scheduling.
       await nodeRunnerTask.trigger(

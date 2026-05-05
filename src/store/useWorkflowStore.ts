@@ -44,8 +44,9 @@ export type WorkflowState = {
   future: { nodes: Node[]; edges: Edge[] }[];
   runStatus: Record<string, RunStatus>;
   currentRunId: string | null;
-  // Live LLM stream chunks accumulated per canvas nodeId. Written by the
-  // GeminiStreamSubscriber while a Gemini node-runner is streaming.
+  // Live LLM stream chunks accumulated per canvas nodeId. Written by
+  // RealtimeCoordinator's per-run subscriber while a Gemini node-runner
+  // is streaming.
   // Cleared at the start of each run so a previous run's text doesn't
   // ghost a fresh one.
   streamingText: Record<string, string>;

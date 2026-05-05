@@ -47,7 +47,7 @@ import { HistorySidebar } from "./HistorySidebar";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { ShortcutsModal } from "./ShortcutsModal";
 import { ToastBar } from "./ToastBar";
-import { GeminiStreamCoordinator } from "./GeminiStreamCoordinator";
+import { RealtimeCoordinator } from "./RealtimeCoordinator";
 
 const nodeTypes = {
   requestInputs: RequestInputsNode,
@@ -216,6 +216,18 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
     [setNodes, setEdges, setWorkflowName],
   );
 
+  // Slow output-fetching loop. The canvas glow / `runStatus` is now
+  // driven primarily by `RealtimeCoordinator` over SSE; this loop's
+  // job is narrower:
+  //   - Read each NodeRun's persisted `output` once it succeeds and
+  //     write it onto canvas state via `updateNodeData` (Gemini
+  //     `response`, Response `result`/`results`, Crop `outputUrl`).
+  //   - Detect terminal `WorkflowRun.status` and flip `setRunning(false)`.
+  // It also still calls `setRunStatus(map)` as a true fallback for the
+  // glow if the realtime token mint or SSE stream failed — in that
+  // case this is the only thing keeping the canvas live. Cadence is
+  // 5 s instead of the original 2 s because realtime is the primary
+  // path.
   const pollRun = useCallback(
     async (runId: string) => {
       const seenOutputs = new Set<string>();
@@ -252,7 +264,7 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
           done = true;
           setRunning(false);
         }
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 5000));
       }
       setHistoryKey((k) => k + 1);
     },
@@ -297,7 +309,7 @@ function CanvasInner({ initial }: { initial: InitialWorkflow }) {
 
   return (
     <WorkflowRunProvider value={{ triggerRun, isRunning: running }}>
-    {currentRunId && running ? <GeminiStreamCoordinator workflowRunId={currentRunId} /> : null}
+    {currentRunId && running ? <RealtimeCoordinator workflowRunId={currentRunId} /> : null}
     <div style={{ height: "calc(100vh - 3.5rem)", width: "100%" }} className="relative">
       <ReactFlow
         nodes={nodes}

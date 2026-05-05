@@ -33,7 +33,7 @@ export function ResponseNode({ id, data, selected }: NodeProps<Data>) {
   const edges = useWorkflowStore((s) => s.edges);
   const allNodes = useWorkflowStore((s) => s.nodes);
   // Live LLM stream chunks keyed by canvas nodeId, written by
-  // GeminiStreamCoordinator while a gemini node-runner is streaming.
+  // RealtimeCoordinator while a gemini node-runner is streaming.
   // For gemini-source rows we prefer this over the persisted result so
   // the Response card animates the response in real time.
   const streamingText = useWorkflowStore((s) => s.streamingText);

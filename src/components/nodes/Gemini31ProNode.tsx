@@ -89,7 +89,7 @@ export function Gemini31ProNode({ id, data, selected }: NodeProps<Data>) {
   const onConnect = useWorkflowStore((s) => s.onConnect);
   const nodes = useWorkflowStore((s) => s.nodes);
   const edges = useWorkflowStore((s) => s.edges);
-  // While a Gemini run is streaming, GeminiStreamCoordinator writes
+  // While a Gemini run is streaming, RealtimeCoordinator writes
   // accumulated chunks into the store keyed by canvas nodeId. Prefer
   // it over the persisted data.response so the UI updates token-by-
   // token instead of jumping from "No output yet" to the final text.

@@ -241,7 +241,7 @@ function showOutputSection(nodeType: string): boolean {
 
 function NodeRunRow({ run, label }: { run: NodeRun; label: string }) {
   const [open, setOpen] = useState(false);
-  // While a Gemini run is streaming, GeminiStreamCoordinator keeps the
+  // While a Gemini run is streaming, RealtimeCoordinator keeps the
   // accumulated text on the store keyed by canvas nodeId. Surface it
   // in the sidebar's Output panel so the History view animates the
   // response live too, not just the Gemini node body.
