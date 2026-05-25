@@ -143,6 +143,11 @@ export const nodeRunnerTask = task({
   // Cap covers Crop's mandatory 30 s delay + Transloadit round-trip and
   // the longest Gemini calls. Bump if a future worker needs more.
   maxDuration: 90,
+  // Video workers (generateVideo / enhanceVideo / extendVideo) handle
+  // 10–40 MB MP4 buffers plus an FFmpeg subprocess — the default machine
+  // (small-1x, ~0.5 GB) OOMs on stitch-and-upload. medium-1x (2 GB) covers
+  // a Veo 8 s + 8 s extend without blowing past memory limits.
+  machine: "medium-1x",
   // Final-attempt safety net. Worker try/catch handles in-band failures
   // (writes the row to FAILED before throwing), but OOM / host crash /
   // maxDuration timeout skip those — this hook ensures the row is

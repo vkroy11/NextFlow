@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { googleAI } from "@/lib/googleai";
-import { uploadBufferToTransloadit } from "@/lib/transloadit";
+import { uploadFilePathToTransloadit } from "@/lib/transloadit";
 import { prisma } from "@/lib/prisma";
 import { rethrowClassified } from "@/lib/triggerErrors";
 import type { Prisma } from "@prisma/client";
@@ -213,9 +213,10 @@ export async function runExtendVideo(
       ],
       { timeout: 120_000 },
     );
-    const mergedBuf = await readFile(outputPath);
 
-    const { url } = await uploadBufferToTransloadit(mergedBuf, "extended.mp4", "video/mp4");
+    // Upload directly from disk — avoids holding the merged video buffer
+    // in memory, which was triggering OOM on small Trigger.dev machines.
+    const { url } = await uploadFilePathToTransloadit(outputPath);
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({

@@ -124,6 +124,31 @@ export async function cropImageViaTransloadit(input: {
  * sniffs the type from the file extension, and the temp file inherits the
  * original `filename`'s extension below.
  */
+/**
+ * Upload a file already on disk to Transloadit. Avoids a buffer round-trip
+ * for callers (notably the video workers) whose payload already exists as
+ * a temp file. The caller owns the file's lifecycle.
+ */
+export async function uploadFilePathToTransloadit(filePath: string) {
+  const c = client();
+  const result = await c.createAssembly({
+    files: { file: filePath },
+    params: {
+      steps: {
+        ":original": {
+          robot: "/upload/handle",
+        },
+      },
+    },
+    waitForCompletion: true,
+  });
+  const url =
+    result?.uploads?.[0]?.ssl_url ??
+    (result?.results as Record<string, Array<{ ssl_url?: string }>> | undefined)?.[":original"]?.[0]?.ssl_url;
+  if (!url) throw new Error("Transloadit upload returned no url");
+  return { url, assemblyId: result.assembly_id ?? "" };
+}
+
 export async function uploadBufferToTransloadit(
   buf: Buffer,
   filename: string,
