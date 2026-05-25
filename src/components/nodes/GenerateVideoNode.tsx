@@ -215,7 +215,9 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
           />
           <div className="mb-1.5 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-900">Input Images</span>
-            <span className="text-[10px] text-gray-400">optional — slot 1 = start, 2-3 = refs</span>
+            <span className="text-[10px] text-gray-400">
+              optional — 1 image = start frame, 2-3 = references
+            </span>
           </div>
           {imagesAtCap ? (
             <div className="inline-flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-[#FAFAFA] px-3 py-2 text-[12px] font-medium text-gray-400">
@@ -258,25 +260,29 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
                 {imageDisplay.map((item, i) => {
                   const isFirst = i === 0;
                   const isLast = i === imageDisplay.length - 1;
+                  // Only the *single-image* case is image-to-video (start
+                  // frame). With 2-3 images Veo runs in reference mode so
+                  // none of them is a start frame — they're all refs.
+                  const isStartFrame = isFirst && imageDisplay.length === 1;
                   return (
                     <div key={item.key} className="flex flex-col items-center gap-1">
                       <div
                         className={cn(
                           "relative h-20 w-20 overflow-hidden rounded-lg border-2 bg-[#FAFAFA]",
-                          isFirst
+                          isStartFrame
                             ? "border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.18)]"
                             : "border-gray-200",
                         )}
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={item.url} alt={`input ${i + 1}`} className="block h-full w-full object-cover" />
-                        {isFirst && (
+                        {isStartFrame && (
                           <div className="absolute left-0 right-0 top-0 flex items-center justify-center gap-1 bg-indigo-600/90 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-white">
                             <Sparkles className="h-2.5 w-2.5" />
                             Start frame
                           </div>
                         )}
-                        {!isFirst && (
+                        {!isStartFrame && (
                           <div className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-900/70 text-[9px] font-semibold text-white">
                             {i + 1}
                           </div>
@@ -322,7 +328,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
           )}
           {isImageToVideo && (
             <p className="mt-1 text-[10px] text-indigo-600">
-              {itemsRaw.length > 1 ? "Image-to-video + references" : "Image-to-video mode"}
+              {itemsRaw.length === 1 ? "Image-to-video mode" : "Reference-image mode"}
             </p>
           )}
         </div>

@@ -87,38 +87,39 @@ export async function runGenerateVideo(
       return { imageBytes: b64, mimeType: contentType.split(";")[0] };
     }
 
-    // Slot 0 → image (start frame); slots 1-2 → referenceImages.
-    // Veo's referenceImages payload requires `referenceType` per entry.
-    // "ASSET" covers subjects/objects/characters and is the right default
-    // for "use these as visual references for the generation".
+    // Veo has two mutually exclusive image modes:
+    //   - Exactly 1 image → `image` param (image-to-video, slot 1 = start frame)
+    //   - 2 or 3 images   → `referenceImages` (reference mode for style/subject)
+    // Combining `image` + `referenceImages` triggers the generic
+    // "Unsupported video generation request" 400 from Veo. So we pick one
+    // mode based on how many images the user connected.
     type RefImage = {
       image: { imageBytes: string; mimeType: string };
       referenceType: VideoGenerationReferenceType;
     };
     let imageParam: { imageBytes: string; mimeType: string } | undefined;
     let referenceImages: RefImage[] | undefined;
-    if (inputUrls.length > 0) {
+
+    if (inputUrls.length === 1) {
       imageParam = await fetchImageParam(inputUrls[0]);
-    }
-    if (inputUrls.length > 1) {
+    } else if (inputUrls.length >= 2) {
       const refs: RefImage[] = [];
-      for (let i = 1; i < inputUrls.length; i++) {
+      for (const url of inputUrls) {
         refs.push({
-          image: await fetchImageParam(inputUrls[i]),
+          image: await fetchImageParam(url),
           referenceType: VideoGenerationReferenceType.ASSET,
         });
       }
       referenceImages = refs;
     }
 
-    // Build the request. Only include optional config fields the user has
-    // explicitly set — Veo on the Gemini Developer API rejects unknown or
-    // out-of-spec combinations with a generic "Unsupported video generation
-    // request" 400, so the minimal viable request shape matches the docs at
-    // https://ai.google.dev/gemini-api/docs/video most safely.
+    // Build the request. `numberOfVideos: 1` was working in earlier runs so
+    // it stays. The user-visible "Unsupported video generation request" 400
+    // from Veo is generic — debug via the logger.info below.
     const veoConfig: Record<string, unknown> = {
       aspectRatio: payload.aspectRatio,
       durationSeconds: payload.durationSeconds,
+      numberOfVideos: 1,
     };
     if (payload.negativePrompt) veoConfig.negativePrompt = payload.negativePrompt;
     if (payload.resolution) veoConfig.resolution = payload.resolution;
