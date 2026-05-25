@@ -140,6 +140,15 @@ export async function runExtendVideo(
         }
 
         const nativeDuration = await ffprobeDuration(nativePath);
+        // Sanity check: Veo will sometimes echo the input back unchanged
+        // (silent failure mode on the preview model). Falling through to
+        // the last-frame fallback gives a real extension instead of
+        // shipping the user's input as the "extended" output.
+        if (Math.abs(nativeDuration - inputDuration) < 1.0) {
+          throw new Error(
+            `Veo native returned same-duration video (${nativeDuration.toFixed(1)}s ≈ input ${inputDuration.toFixed(1)}s) — no extension happened`,
+          );
+        }
         // If Veo returned the merged video (input + extension) we expect
         // its duration to be at least the input's duration plus a few
         // seconds. If it's much shorter, we got just the continuation.
@@ -233,6 +242,12 @@ export async function runExtendVideo(
     // ---------- Final audio remux ----------
     // Bring the input's audio track (if any) onto the final video.
     // `0:a:0?` makes the audio map optional — silent input still works.
+    // No `-shortest`: the extended video is longer than the input's audio,
+    // and `-shortest` would slice the video back down to the input's
+    // duration, leaving the user with their input video unchanged. Without
+    // it the audio plays for its natural length and the video continues
+    // silently. A downstream `muxAudioVideo` node can replace the audio
+    // with TTS or any other track if the silent tail matters.
     const finalPath = join(workdir, "final.mp4");
     await execFileP(
       FFMPEG,
@@ -244,7 +259,6 @@ export async function runExtendVideo(
         "-map", "1:a:0?",
         "-c:v", "copy",
         "-c:a", "aac",
-        "-shortest",
         finalPath,
       ],
       { timeout: 120_000 },
