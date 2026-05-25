@@ -59,9 +59,10 @@ export async function runGenerateImage(
     const LEGACY_IMAGE_MODELS = new Set([
       "gemini-2.0-flash-preview-image-generation",
       "gemini-2.0-flash-exp-image-generation",
+      "gemini-2.0-flash-exp",
     ]);
     const model = LEGACY_IMAGE_MODELS.has(payload.model)
-      ? "gemini-2.0-flash-exp"
+      ? "gemini-3-pro-image-preview"
       : payload.model;
 
     // Build content parts — always include the prompt; add inline image data when editing.
