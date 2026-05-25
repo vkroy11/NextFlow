@@ -1,4 +1,4 @@
-import { wait } from "@trigger.dev/sdk/v3";
+import { logger, wait } from "@trigger.dev/sdk/v3";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,18 +111,31 @@ export async function runGenerateVideo(
       referenceImages = refs;
     }
 
+    // Build the request. Only include optional config fields the user has
+    // explicitly set — Veo on the Gemini Developer API rejects unknown or
+    // out-of-spec combinations with a generic "Unsupported video generation
+    // request" 400, so the minimal viable request shape matches the docs at
+    // https://ai.google.dev/gemini-api/docs/video most safely.
+    const veoConfig: Record<string, unknown> = {
+      aspectRatio: payload.aspectRatio,
+      durationSeconds: payload.durationSeconds,
+    };
+    if (payload.negativePrompt) veoConfig.negativePrompt = payload.negativePrompt;
+    if (payload.resolution) veoConfig.resolution = payload.resolution;
+    if (payload.personGeneration) veoConfig.personGeneration = payload.personGeneration;
+    if (referenceImages && referenceImages.length > 0) veoConfig.referenceImages = referenceImages;
+
+    logger.info("Veo generateVideos request", {
+      model: payload.model,
+      hasImage: !!imageParam,
+      referenceCount: referenceImages?.length ?? 0,
+      config: { ...veoConfig, referenceImages: veoConfig.referenceImages ? "(omitted)" : undefined },
+    });
+
     let operation = await ai.models.generateVideos({
       model: payload.model,
       prompt: payload.prompt,
-      config: {
-        durationSeconds: payload.durationSeconds,
-        aspectRatio: payload.aspectRatio,
-        numberOfVideos: 1,
-        ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
-        ...(payload.resolution ? { resolution: payload.resolution } : {}),
-        ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
-        ...(referenceImages && referenceImages.length > 0 ? { referenceImages } : {}),
-      },
+      config: veoConfig,
       ...(imageParam ? { image: imageParam } : {}),
     });
 
