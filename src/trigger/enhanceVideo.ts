@@ -28,7 +28,7 @@ export type EnhanceVideoPayload = {
 
 };
 
-export type EnhanceVideoOutput = { url: string };
+export type EnhanceVideoOutput = { url: string; veoFileUri?: string };
 
 /**
  * Worker for the enhanceVideo node. Strategy:
@@ -138,16 +138,14 @@ export async function runEnhanceVideo(
     if (generated.video.videoBytes) {
       buf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
-      const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
-      const res = await fetch(`${generated.video.uri}:download?alt=media`, {
-        headers: { "x-goog-api-key": apiKey },
-      });
-      if (!res.ok) throw new Error(`fetch Veo enhance URI: ${res.status}`);
-      buf = Buffer.from(await res.arrayBuffer());
+      const tempPath = join(workdir, "veo-output.mp4");
+      await ai.files.download({ file: generated, downloadPath: tempPath });
+      buf = await readFile(tempPath);
     } else {
       throw new Error("Veo enhance video has neither videoBytes nor uri");
     }
 
+    const veoFileUri = generated.video.uri ?? undefined;
     const { url } = await uploadBufferToTransloadit(buf, "enhanced.mp4", "video/mp4");
 
     const finishedAt = new Date();
@@ -157,10 +155,10 @@ export async function runEnhanceVideo(
         status: "SUCCESS",
         finishedAt,
         durationMs: finishedAt.getTime() - startedAt.getTime(),
-        output: { url },
+        output: { url, ...(veoFileUri ? { veoFileUri } : {}) },
       },
     });
-    return { url };
+    return { url, ...(veoFileUri ? { veoFileUri } : {}) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.nodeRun.update({

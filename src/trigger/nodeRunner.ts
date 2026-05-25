@@ -589,6 +589,7 @@ async function executeWorker(args: {
         });
         throw new Error(`extendVideo ${nodeId}: no input video`);
       }
+      const inputVeoFileUri = resolveUpstreamVeoFileUri(parentIds, parentByEdge, edges, nodeId);
       const extendPayload: ExtendVideoPayload = {
         workflowRunId,
         nodeRunId,
@@ -596,7 +597,8 @@ async function executeWorker(args: {
         model: data.model ?? "veo-3.1-generate-preview",
         prompt: promptOverride ?? data.prompt ?? "",
         inputVideoUrl,
-        durationSeconds: data.durationSeconds ?? 6,
+        inputVeoFileUri: inputVeoFileUri ?? undefined,
+        durationSeconds: data.durationSeconds ?? 8,
         aspectRatio: data.aspectRatio ?? "16:9",
         negativePrompt: data.negativePrompt,
         seed: data.seed,
@@ -775,6 +777,34 @@ function resolveVideoInput(
       const v = out.output.fields[handle];
       if (typeof v === "object" && v && "url" in v) return (v as { url: string }).url;
       if (typeof v === "string") return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the upstream Veo file URI for an extendVideo input. Only set when
+ * the parent is a `generateVideo` or `enhanceVideo` node whose run still has
+ * the original Veo URI (Files API URIs last ~48 h). Used to attempt native
+ * Veo continuation before falling back to last-frame image-to-video.
+ */
+function resolveUpstreamVeoFileUri(
+  parentIds: string[],
+  parentByEdge: Record<string, NodeOutput>,
+  edges: CanvasEdge[],
+  childId: string,
+): string | null {
+  for (const pid of parentIds) {
+    const edge = findEdgeFromParent(pid, childId, edges).find(
+      (e) =>
+        (e.targetHandle ?? "").toLowerCase().includes("input") ||
+        (e.sourceHandle ?? "").toLowerCase().includes("video"),
+    );
+    if (!edge) continue;
+    const out = parentByEdge[pid];
+    if (!out) continue;
+    if (out.kind === "generateVideo" || out.kind === "enhanceVideo") {
+      return out.output.veoFileUri ?? null;
     }
   }
   return null;

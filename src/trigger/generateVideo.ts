@@ -1,4 +1,7 @@
 import { wait } from "@trigger.dev/sdk/v3";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { googleAI } from "@/lib/googleai";
 import { uploadBufferToTransloadit } from "@/lib/transloadit";
 import { prisma } from "@/lib/prisma";
@@ -23,7 +26,7 @@ export type GenerateVideoPayload = {
   personGeneration?: string;
 };
 
-export type GenerateVideoOutput = { url: string };
+export type GenerateVideoOutput = { url: string; veoFileUri?: string };
 
 /**
  * Worker for the generateVideo node. Uses Veo 3.1 via the @google/genai SDK.
@@ -59,6 +62,7 @@ export async function runGenerateVideo(
     data: { startedAt, input: inputRecord as Prisma.InputJsonValue },
   });
 
+  const workdir = await mkdtemp(join(tmpdir(), "nf-gen-video-"));
   try {
     const ai = googleAI();
 
@@ -111,21 +115,21 @@ export async function runGenerateVideo(
       throw new Error("Veo returned no video in operation response");
     }
 
-    // Prefer base64 bytes; fall back to authenticated URI download.
-    // The URI is a metadata endpoint — append :download?alt=media for binary.
+    // Prefer base64 bytes; otherwise download via the SDK (handles auth + URL).
     let buf: Buffer;
     if (generated.video.videoBytes) {
       buf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
-      const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
-      const res = await fetch(`${generated.video.uri}:download?alt=media`, {
-        headers: { "x-goog-api-key": apiKey },
-      });
-      if (!res.ok) throw new Error(`fetch Veo video URI: ${res.status}`);
-      buf = Buffer.from(await res.arrayBuffer());
+      const tempPath = join(workdir, "veo-output.mp4");
+      await ai.files.download({ file: generated, downloadPath: tempPath });
+      buf = await readFile(tempPath);
     } else {
       throw new Error("Veo video has neither videoBytes nor uri");
     }
+
+    // Preserve the Veo URI so downstream `extendVideo` can attempt native
+    // continuation. The URI is only valid in the same project for ~48 h.
+    const veoFileUri = generated.video.uri ?? undefined;
 
     const { url } = await uploadBufferToTransloadit(buf, "generated.mp4", "video/mp4");
 
@@ -136,10 +140,10 @@ export async function runGenerateVideo(
         status: "SUCCESS",
         finishedAt,
         durationMs: finishedAt.getTime() - startedAt.getTime(),
-        output: { url },
+        output: { url, ...(veoFileUri ? { veoFileUri } : {}) },
       },
     });
-    return { url };
+    return { url, ...(veoFileUri ? { veoFileUri } : {}) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.nodeRun.update({
@@ -147,5 +151,7 @@ export async function runGenerateVideo(
       data: { status: "FAILED", finishedAt: new Date(), error: message },
     });
     rethrowClassified(err);
+  } finally {
+    await rm(workdir, { recursive: true, force: true }).catch(() => {});
   }
 }

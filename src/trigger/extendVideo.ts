@@ -20,6 +20,13 @@ export type ExtendVideoPayload = {
   model: string;
   prompt: string;
   inputVideoUrl: string;
+  /**
+   * Optional Veo Files API URI from a direct upstream `generateVideo` /
+   * `enhanceVideo`. When present we attempt native Veo extension first;
+   * if that fails (expired URI, model rejection, etc.) we fall back to
+   * the last-frame image-to-video approach.
+   */
+  inputVeoFileUri?: string;
   durationSeconds: number;
   aspectRatio: string;
   negativePrompt?: string;
@@ -34,21 +41,17 @@ export type ExtendVideoPayload = {
 export type ExtendVideoOutput = { url: string };
 
 /**
- * Worker for the extendVideo node — native Veo video continuation.
+ * Worker for the extendVideo node — hybrid strategy.
  *
- * Veo on the Gemini Developer API only accepts the input video by URI from
- * the Files API (raw videoBytes are rejected — the SDK comment confirms
- * "Gemini API does not support video bytes"). Flow:
+ * 1. If `inputVeoFileUri` is set (upstream is a fresh Veo node), attempt
+ *    native Veo extension: pass `video: { uri }` directly. This produces
+ *    the cleanest result but only works for Veo-generated inputs.
+ * 2. On any failure (or when no Veo URI is available — uploads, cross-graph
+ *    inputs, expired URIs), fall back to image-to-video: extract the last
+ *    frame of the input video and seed a new generation from it.
  *
- *   1. Download the input video to a temp file.
- *   2. Upload it to the Gemini Files API via ai.files.upload.
- *   3. Poll ai.files.get until the file reaches ACTIVE state (videos go
- *      through PROCESSING first).
- *   4. Call generateVideos with `video: { uri }` (no mimeType — that
- *      serializes to `encoding`, which Veo rejects).
- *   5. Poll the Veo operation until done.
- *   6. Download the continuation and stitch it with the original using
- *      FFmpeg so the output is the full combined video.
+ * Either way, FFmpeg stitches the original input video and the new
+ * segment so the output is the full combined video.
  */
 export async function runExtendVideo(
   payload: ExtendVideoPayload,
@@ -69,6 +72,7 @@ export async function runExtendVideo(
     inputVideoUrl: payload.inputVideoUrl,
     durationSeconds: payload.durationSeconds,
     aspectRatio: payload.aspectRatio,
+    nativeAttempted: !!payload.inputVeoFileUri,
   };
 
   await prisma.nodeRun.update({
@@ -78,7 +82,8 @@ export async function runExtendVideo(
 
   const workdir = await mkdtemp(join(tmpdir(), "nf-extend-"));
   try {
-    // 1. Download input video to disk.
+    // Always download the input video — we need it for both branches:
+    // (a) FFmpeg concat at the end, (b) last-frame extraction in fallback.
     const videoRes = await fetch(payload.inputVideoUrl);
     if (!videoRes.ok) {
       throw new Error(`fetch input video: ${videoRes.status} ${videoRes.statusText}`);
@@ -88,82 +93,111 @@ export async function runExtendVideo(
 
     const ai = googleAI();
 
-    // 2. Upload to Gemini Files API.
-    const uploaded = await ai.files.upload({
-      file: inputPath,
-      config: { mimeType: "video/mp4" },
-    });
-    if (!uploaded.name) {
-      throw new Error("Gemini Files API upload returned no file name");
-    }
+    // Attempt 1: native Veo extension via the upstream URI.
+    let continuationBuf: Buffer | null = null;
+    let nativeError: string | null = null;
 
-    // 3. Poll until the file is ACTIVE (video processing can take a while).
-    let fileInfo = uploaded;
-    let fileAttempts = 0;
-    const MAX_FILE_ATTEMPTS = 60; // 60 × 5 s = 5 min ceiling
-    while (fileInfo.state !== "ACTIVE" && fileAttempts < MAX_FILE_ATTEMPTS) {
-      if (fileInfo.state === "FAILED") {
-        throw new Error("Gemini Files API: input video processing failed");
+    if (payload.inputVeoFileUri) {
+      try {
+        let operation = await ai.models.generateVideos({
+          model: payload.model,
+          prompt: payload.prompt,
+          video: { uri: payload.inputVeoFileUri },
+          config: {
+            durationSeconds: 8, // Veo native extension requires 8 s.
+            aspectRatio: payload.aspectRatio,
+            numberOfVideos: 1,
+            ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
+            ...(payload.resolution ? { resolution: payload.resolution } : {}),
+            ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
+          },
+        });
+
+        let attempts = 0;
+        const MAX_ATTEMPTS = 60;
+        while (!operation.done && attempts < MAX_ATTEMPTS) {
+          await wait.for({ seconds: 10 });
+          operation = await ai.operations.getVideosOperation({ operation });
+          attempts++;
+        }
+        if (!operation.done) throw new Error("native Veo extension timed out");
+
+        const generated = operation.response?.generatedVideos?.[0];
+        if (!generated?.video) throw new Error("native Veo extension returned no video");
+
+        if (generated.video.videoBytes) {
+          continuationBuf = Buffer.from(generated.video.videoBytes as string, "base64");
+        } else if (generated.video.uri) {
+          const tempPath = join(workdir, "veo-native.mp4");
+          await ai.files.download({ file: generated, downloadPath: tempPath });
+          continuationBuf = await readFile(tempPath);
+        } else {
+          throw new Error("native Veo extension: no videoBytes or uri");
+        }
+      } catch (err) {
+        nativeError = err instanceof Error ? err.message : String(err);
+        continuationBuf = null;
       }
-      await wait.for({ seconds: 5 });
-      fileInfo = await ai.files.get({ name: uploaded.name });
-      fileAttempts++;
-    }
-    if (fileInfo.state !== "ACTIVE") {
-      throw new Error("Gemini Files API: input video did not become ACTIVE in 5 minutes");
-    }
-    if (!fileInfo.uri) {
-      throw new Error("Gemini Files API: no URI on ACTIVE file");
     }
 
-    // 4. Call Veo with the file URI (no mimeType — would serialize as `encoding`).
-    let operation = await ai.models.generateVideos({
-      model: payload.model,
-      prompt: payload.prompt,
-      video: { uri: fileInfo.uri },
-      config: {
-        durationSeconds: payload.durationSeconds,
-        aspectRatio: payload.aspectRatio,
-        numberOfVideos: 1,
-        ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
-        ...(payload.resolution ? { resolution: payload.resolution } : {}),
-        ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
-      },
-    });
+    // Attempt 2 (fallback): last-frame image-to-video.
+    if (!continuationBuf) {
+      const lastFramePath = join(workdir, "last.jpg");
+      await execFileP(
+        FFMPEG,
+        ["-y", "-sseof", "-0.5", "-i", inputPath, "-vframes", "1", "-q:v", "2", lastFramePath],
+        { timeout: 60_000 },
+      );
+      const lastFrameBuf = await readFile(lastFramePath);
+      const lastFrameB64 = lastFrameBuf.toString("base64");
 
-    // 5. Poll Veo operation.
-    let attempts = 0;
-    const MAX_ATTEMPTS = 60;
-    while (!operation.done && attempts < MAX_ATTEMPTS) {
-      await wait.for({ seconds: 10 });
-      operation = await ai.operations.getVideosOperation({ operation });
-      attempts++;
-    }
-    if (!operation.done) {
-      throw new Error("Veo video extension timed out after 10 minutes");
-    }
+      const continuationPrompt = payload.prompt
+        ? `Continue the scene naturally. ${payload.prompt}`
+        : "Continue the scene naturally from this frame.";
 
-    const generated = operation.response?.generatedVideos?.[0];
-    if (!generated?.video) {
-      throw new Error("Veo returned no video in extension response");
-    }
-
-    // 6. Download the continuation.
-    let continuationBuf: Buffer;
-    if (generated.video.videoBytes) {
-      continuationBuf = Buffer.from(generated.video.videoBytes as string, "base64");
-    } else if (generated.video.uri) {
-      const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
-      const res = await fetch(`${generated.video.uri}:download?alt=media`, {
-        headers: { "x-goog-api-key": apiKey },
+      let operation = await ai.models.generateVideos({
+        model: payload.model,
+        prompt: continuationPrompt,
+        image: { imageBytes: lastFrameB64, mimeType: "image/jpeg" },
+        config: {
+          durationSeconds: payload.durationSeconds,
+          aspectRatio: payload.aspectRatio,
+          numberOfVideos: 1,
+          ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
+          ...(payload.resolution ? { resolution: payload.resolution } : {}),
+          ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
+        },
       });
-      if (!res.ok) throw new Error(`fetch Veo extend URI: ${res.status}`);
-      continuationBuf = Buffer.from(await res.arrayBuffer());
-    } else {
-      throw new Error("Veo extended video has neither videoBytes nor uri");
+
+      let attempts = 0;
+      const MAX_ATTEMPTS = 60;
+      while (!operation.done && attempts < MAX_ATTEMPTS) {
+        await wait.for({ seconds: 10 });
+        operation = await ai.operations.getVideosOperation({ operation });
+        attempts++;
+      }
+      if (!operation.done) {
+        throw new Error(
+          `Veo extension timed out (fallback path)${nativeError ? `; native attempt: ${nativeError}` : ""}`,
+        );
+      }
+
+      const generated = operation.response?.generatedVideos?.[0];
+      if (!generated?.video) throw new Error("Veo fallback returned no video");
+
+      if (generated.video.videoBytes) {
+        continuationBuf = Buffer.from(generated.video.videoBytes as string, "base64");
+      } else if (generated.video.uri) {
+        const tempPath = join(workdir, "veo-fallback.mp4");
+        await ai.files.download({ file: generated, downloadPath: tempPath });
+        continuationBuf = await readFile(tempPath);
+      } else {
+        throw new Error("Veo fallback: no videoBytes or uri");
+      }
     }
 
-    // 7. Stitch original + continuation with FFmpeg.
+    // Stitch original + continuation. Video-only concat skips audio so a
+    // missing/extra audio track on either side never breaks the merge.
     const contPath = join(workdir, "continuation.mp4");
     await writeFile(contPath, continuationBuf);
     const outputPath = join(workdir, "merged.mp4");

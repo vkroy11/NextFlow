@@ -245,7 +245,12 @@ export function ExtendVideoNode({ id, data, selected }: NodeProps<Data>) {
         {/* Duration + Aspect */}
         <div className="flex items-center gap-4">
           <div>
-            <span className="mb-1 block text-xs font-medium text-gray-700">Duration</span>
+            <span
+              className="mb-1 block text-xs font-medium text-gray-700"
+              title="Used for the fallback path. Native Veo extension always returns 8s."
+            >
+              Duration
+            </span>
             <div className="flex gap-1">
               {DURATIONS.map((d) => (
                 <button
@@ -253,7 +258,7 @@ export function ExtendVideoNode({ id, data, selected }: NodeProps<Data>) {
                   onClick={() => updateNodeData(id, { durationSeconds: d })}
                   className={cn(
                     "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
-                    (data?.durationSeconds ?? 6) === d
+                    (data?.durationSeconds ?? 8) === d
                       ? "border-violet-400 bg-violet-50 text-violet-700"
                       : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
                   )}

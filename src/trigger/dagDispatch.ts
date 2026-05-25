@@ -254,8 +254,8 @@ export type NodeOutput =
   | { kind: "gemini"; output: { text: string } }
   | { kind: "response"; output: { result: string | null; perEdge?: Record<string, string> } }
   | { kind: "generateImage"; output: { url: string } }
-  | { kind: "generateVideo"; output: { url: string } }
-  | { kind: "enhanceVideo"; output: { url: string } }
+  | { kind: "generateVideo"; output: { url: string; veoFileUri?: string } }
+  | { kind: "enhanceVideo"; output: { url: string; veoFileUri?: string } }
   | { kind: "extendVideo"; output: { url: string } };
 
 export function nodeRunRowToOutput(row: {
@@ -290,11 +290,17 @@ export function nodeRunRowToOutput(row: {
     return null;
   }
   if (row.nodeType === "generateVideo") {
-    if (typeof out.url === "string") return { kind: "generateVideo", output: { url: out.url } };
+    if (typeof out.url === "string") {
+      const veoFileUri = typeof out.veoFileUri === "string" ? out.veoFileUri : undefined;
+      return { kind: "generateVideo", output: { url: out.url, ...(veoFileUri ? { veoFileUri } : {}) } };
+    }
     return null;
   }
   if (row.nodeType === "enhanceVideo") {
-    if (typeof out.url === "string") return { kind: "enhanceVideo", output: { url: out.url } };
+    if (typeof out.url === "string") {
+      const veoFileUri = typeof out.veoFileUri === "string" ? out.veoFileUri : undefined;
+      return { kind: "enhanceVideo", output: { url: out.url, ...(veoFileUri ? { veoFileUri } : {}) } };
+    }
     return null;
   }
   if (row.nodeType === "extendVideo") {

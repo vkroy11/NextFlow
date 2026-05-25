@@ -149,7 +149,7 @@ const CATEGORIES: CategoryDef[] = [
             defaultData: {
               model: "veo-3.1-generate-preview",
               prompt: "",
-              durationSeconds: 6,
+              durationSeconds: 8,
               aspectRatio: "16:9",
             },
           },
