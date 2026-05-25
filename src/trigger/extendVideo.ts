@@ -1,9 +1,17 @@
 import { wait } from "@trigger.dev/sdk/v3";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { googleAI } from "@/lib/googleai";
 import { uploadBufferToTransloadit } from "@/lib/transloadit";
 import { prisma } from "@/lib/prisma";
 import { rethrowClassified } from "@/lib/triggerErrors";
 import type { Prisma } from "@prisma/client";
+
+const execFileP = promisify(execFile);
+const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
 
 export type ExtendVideoPayload = {
   workflowRunId: string;
@@ -31,8 +39,8 @@ export type ExtendVideoOutput = { url: string };
  * mutually exclusive in Veo's API — this worker uses `video` while
  * generateVideo uses `image` for image-to-video mode.
  *
- * The input video is fetched, base64-encoded, and passed as `videoBytes`.
- * Same async polling pattern as generateVideo.ts.
+ * After Veo generates the continuation, FFmpeg stitches the original and the
+ * new segment together so the output is always the full combined video.
  */
 export async function runExtendVideo(
   payload: ExtendVideoPayload,
@@ -60,23 +68,24 @@ export async function runExtendVideo(
     data: { startedAt, input: inputRecord as Prisma.InputJsonValue },
   });
 
+  const workdir = await mkdtemp(join(tmpdir(), "nf-extend-"));
   try {
-    // Fetch video bytes for Veo's video continuation parameter.
+    // Fetch input video — write to disk for FFmpeg and convert to base64 for Veo.
     const videoRes = await fetch(payload.inputVideoUrl);
     if (!videoRes.ok) {
       throw new Error(`fetch input video: ${videoRes.status} ${videoRes.statusText}`);
     }
     const videoArrBuf = await videoRes.arrayBuffer();
+    const inputPath = join(workdir, "input.mp4");
+    await writeFile(inputPath, Buffer.from(videoArrBuf));
     const videoB64 = Buffer.from(videoArrBuf).toString("base64");
-    const contentType = videoRes.headers.get("content-type") ?? "video/mp4";
-    const mimeType = contentType.split(";")[0];
 
     const ai = googleAI();
 
     let operation = await ai.models.generateVideos({
       model: payload.model,
       prompt: payload.prompt,
-      video: { videoBytes: videoB64, mimeType },
+      video: { videoBytes: videoB64 },
       config: {
         durationSeconds: payload.durationSeconds,
         aspectRatio: payload.aspectRatio,
@@ -108,21 +117,40 @@ export async function runExtendVideo(
       throw new Error("Veo returned no video in extension response");
     }
 
-    let buf: Buffer;
+    let continuationBuf: Buffer;
     if (generated.video.videoBytes) {
-      buf = Buffer.from(generated.video.videoBytes as string, "base64");
+      continuationBuf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
       const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
       const res = await fetch(`${generated.video.uri}:download?alt=media`, {
         headers: { "x-goog-api-key": apiKey },
       });
       if (!res.ok) throw new Error(`fetch Veo extend URI: ${res.status}`);
-      buf = Buffer.from(await res.arrayBuffer());
+      continuationBuf = Buffer.from(await res.arrayBuffer());
     } else {
       throw new Error("Veo extended video has neither videoBytes nor uri");
     }
 
-    const { url } = await uploadBufferToTransloadit(buf, "extended.mp4", "video/mp4");
+    // Write continuation to disk and stitch with original using FFmpeg.
+    const contPath = join(workdir, "continuation.mp4");
+    await writeFile(contPath, continuationBuf);
+
+    const outputPath = join(workdir, "merged.mp4");
+    await execFileP(
+      FFMPEG,
+      [
+        "-y",
+        "-i", inputPath,
+        "-i", contPath,
+        "-filter_complex", "[0:v:0][1:v:0]concat=n=2:v=1[outv]",
+        "-map", "[outv]",
+        outputPath,
+      ],
+      { timeout: 120_000 },
+    );
+    const mergedBuf = await readFile(outputPath);
+
+    const { url } = await uploadBufferToTransloadit(mergedBuf, "extended.mp4", "video/mp4");
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({
@@ -142,5 +170,7 @@ export async function runExtendVideo(
       data: { status: "FAILED", finishedAt: new Date(), error: message },
     });
     rethrowClassified(err);
+  } finally {
+    await rm(workdir, { recursive: true, force: true }).catch(() => {});
   }
 }
