@@ -175,7 +175,12 @@ function ActiveCoordinator({
         updateNodeData(nodeId, { outputUrl: out.url });
         writtenOutputsRef.current.add(r.id);
       } else if (
-        (kind === "generateImage" || kind === "generateVideo" || kind === "enhanceVideo" || kind === "extendVideo") &&
+        (kind === "generateImage" ||
+          kind === "generateVideo" ||
+          kind === "enhanceVideo" ||
+          kind === "extendVideo" ||
+          kind === "generateAudio" ||
+          kind === "muxAudioVideo") &&
         typeof out.url === "string"
       ) {
         updateNodeData(nodeId, { outputUrl: out.url });

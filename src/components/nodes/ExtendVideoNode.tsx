@@ -23,11 +23,7 @@ type Data = {
   durationSeconds?: number;
   aspectRatio?: string;
   negativePrompt?: string;
-  seed?: number;
-  fps?: number;
   resolution?: string;
-  generateAudio?: boolean;
-  enhancePrompt?: boolean;
   personGeneration?: string;
 };
 
@@ -306,81 +302,24 @@ export function ExtendVideoNode({ id, data, selected }: NodeProps<Data>) {
               className="nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-gray-600">Seed</span>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={data?.seed ?? ""}
-              onChange={(e) =>
-                updateNodeData(id, {
-                  seed: e.target.value === "" ? undefined : Number(e.target.value),
-                })
-              }
-              placeholder="random"
-              className="nodrag w-full rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
-            />
-          </label>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <span className="mb-1 block text-[11px] font-medium text-gray-600">FPS</span>
-              <div className="flex gap-1">
-                {([24, 30] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => updateNodeData(id, { fps: data?.fps === f ? undefined : f })}
-                    className={cn(
-                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
-                      data?.fps === f
-                        ? "border-violet-400 bg-violet-50 text-violet-700"
-                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
-                    )}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
+          <div>
+            <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
+            <div className="flex gap-1">
+              {(["720p", "1080p"] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => updateNodeData(id, { resolution: data?.resolution === r ? undefined : r })}
+                  className={cn(
+                    "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                    data?.resolution === r
+                      ? "border-violet-400 bg-violet-50 text-violet-700"
+                      : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
-            <div className="flex-1">
-              <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
-              <div className="flex gap-1">
-                {(["720p", "1080p"] as const).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => updateNodeData(id, { resolution: data?.resolution === r ? undefined : r })}
-                    className={cn(
-                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
-                      data?.resolution === r
-                        ? "border-violet-400 bg-violet-50 text-violet-700"
-                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
-                    )}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            <label className="nodrag flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={data?.generateAudio ?? false}
-                onChange={(e) => updateNodeData(id, { generateAudio: e.target.checked })}
-                className="rounded accent-violet-500"
-              />
-              <span className="text-[11px] font-medium text-gray-600">Generate Audio</span>
-            </label>
-            <label className="nodrag flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={data?.enhancePrompt ?? false}
-                onChange={(e) => updateNodeData(id, { enhancePrompt: e.target.checked })}
-                className="rounded accent-violet-500"
-              />
-              <span className="text-[11px] font-medium text-gray-600">Enhance Prompt</span>
-            </label>
           </div>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium text-gray-600">Person Generation</span>

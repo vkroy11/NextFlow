@@ -10,6 +10,13 @@ export type GenerateImagePayload = {
   nodeId: string;
   model: string;
   prompt: string;
+  /**
+   * Up to 3 image URLs. First is treated as the primary edit target; the
+   * rest are passed as additional inlineData parts (composition / style
+   * references). `inputImageUrl` is the legacy single-image alias and is
+   * folded into `inputImageUrls[0]` if `inputImageUrls` is absent.
+   */
+  inputImageUrls?: string[];
   inputImageUrl?: string | null;
   aspectRatio?: string;
   systemPrompt?: string;
@@ -39,12 +46,20 @@ export async function runGenerateImage(
     if (typeof out.url === "string") return { url: out.url };
   }
 
+  // Normalize to a single array of input URLs (max 3).
+  const inputUrls: string[] = (payload.inputImageUrls && payload.inputImageUrls.length > 0
+    ? payload.inputImageUrls
+    : payload.inputImageUrl
+      ? [payload.inputImageUrl]
+      : []
+  ).slice(0, 3);
+
   const startedAt = new Date();
   const inputRecord: Record<string, unknown> = {
     model: payload.model,
     prompt: payload.prompt,
   };
-  if (payload.inputImageUrl) inputRecord.inputImageUrl = payload.inputImageUrl;
+  if (inputUrls.length > 0) inputRecord.inputImageUrls = inputUrls;
   if (payload.aspectRatio) inputRecord.aspectRatio = payload.aspectRatio;
 
   await prisma.nodeRun.update({
@@ -65,13 +80,15 @@ export async function runGenerateImage(
       ? "gemini-3-pro-image-preview"
       : payload.model;
 
-    // Build content parts — always include the prompt; add inline image data when editing.
+    // Build content parts — always include the prompt; add inline image
+    // data for each input URL (up to 3). Order is preserved so the model
+    // can treat slot 1 as the primary edit target and the rest as refs.
     type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
     const parts: Part[] = [{ text: payload.prompt }];
 
-    if (payload.inputImageUrl) {
-      const res = await fetch(payload.inputImageUrl);
-      if (!res.ok) throw new Error(`fetch input image: ${res.status} ${res.statusText}`);
+    for (const url of inputUrls) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`fetch input image (${url}): ${res.status} ${res.statusText}`);
       const arrayBuf = await res.arrayBuffer();
       const b64 = Buffer.from(arrayBuf).toString("base64");
       const contentType = res.headers.get("content-type") ?? "image/jpeg";

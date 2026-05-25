@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, Image as ImageIcon, Loader2, Settings as Set
 import { NodeShell } from "./NodeShell";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { colorForHandle } from "@/lib/handleColors";
-import { isHandleConnected, resolveConnectedValue } from "@/lib/connectedValues";
+import { isHandleConnected, resolveAllConnectedImageUrls, resolveConnectedValue } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
 import { useWorkflowRun } from "../canvas/RunContext";
 import { MediaModal } from "./MediaModal";
@@ -77,24 +77,22 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
 
   const upstreamPrompt = resolveConnectedValue(nodes, edges, id, "prompt");
   const upstreamSystem = resolveConnectedValue(nodes, edges, id, "system_prompt");
-  const upstreamInput = resolveConnectedValue(nodes, edges, id, "input");
 
   const promptValue =
     promptConnected && typeof upstreamPrompt === "string" ? upstreamPrompt : data?.prompt ?? "";
   const systemValue =
     systemConnected && typeof upstreamSystem === "string" ? upstreamSystem : data?.systemPrompt ?? "";
 
-  function pickUrl(v: unknown): string | null {
-    if (typeof v === "string") return v;
-    if (v && typeof v === "object" && "url" in v) return (v as { url: string }).url;
-    return null;
+  // Fan-in: collect every connected image URL plus the local upload as the
+  // last slot, capped at 3 total (slot 1 = primary edit target; 2-3 = refs).
+  const connectedImageUrls = resolveAllConnectedImageUrls(nodes, edges, id, "input");
+  const imageUrls: string[] = [...connectedImageUrls];
+  if (!inputConnected && (data?.inputFile?.url || data?.inputUrl)) {
+    imageUrls.push(data.inputFile?.url ?? data.inputUrl ?? "");
   }
-
-  const inputImageUrl = inputConnected
-    ? pickUrl(upstreamInput)
-    : data?.inputFile?.url ?? data?.inputUrl ?? null;
-
-  const isEditMode = !!inputImageUrl;
+  const imageDisplay = imageUrls.slice(0, 3);
+  const imagesAtCap = connectedImageUrls.length >= 3;
+  const isEditMode = imageUrls.length > 0;
   const isRunning = runStatus === "running";
 
   async function uploadInputImage(file: File) {
@@ -197,7 +195,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
           />
         </div>
 
-        {/* Input image (optional — triggers edit mode) */}
+        {/* Input images (optional — up to 3; slot 1 = edit target, 2-3 = refs) */}
         <div className="relative">
           <Handle
             id="input"
@@ -214,12 +212,12 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
             }}
           />
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-900">Input Image</span>
-            <span className="text-[10px] text-gray-400">optional — activates edit mode</span>
+            <span className="text-xs font-medium text-gray-900">Input Images</span>
+            <span className="text-[10px] text-gray-400">optional — up to 3</span>
           </div>
-          {inputConnected ? (
+          {imagesAtCap ? (
             <div className="inline-flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-[#FAFAFA] px-3 py-2 text-[12px] font-medium text-gray-400">
-              <ImageIcon className="h-3.5 w-3.5" /> Connected
+              <ImageIcon className="h-3.5 w-3.5" /> 3 connected
             </div>
           ) : (
             <label
@@ -247,21 +245,38 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
               ) : (
                 <>
                   <Upload className="h-3.5 w-3.5" />
-                  {inputImageUrl ? "Change image" : "Upload image"}
+                  {data?.inputFile?.url || data?.inputUrl ? "Change image" : "Upload image"}
                 </>
               )}
             </label>
           )}
-          {inputImageUrl && !inputConnected && (
-            <div className="relative mt-2 overflow-hidden rounded-lg border border-gray-200">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={inputImageUrl} alt="input" className="block max-h-32 w-full object-cover" />
-              <button
-                onClick={() => updateNodeData(id, { inputFile: null, inputUrl: null })}
-                className="nodrag absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-500"
-              >
-                <X className="h-3 w-3" />
-              </button>
+          {imageDisplay.length > 0 && (
+            <div className="mt-2 flex items-center justify-end gap-2">
+              {imageDisplay.map((url, i) => {
+                const isLocalSlot =
+                  !inputConnected &&
+                  !!(data?.inputFile?.url || data?.inputUrl) &&
+                  url === (data?.inputFile?.url ?? data?.inputUrl);
+                return (
+                  <div
+                    key={`${url.slice(0, 32)}-${i}`}
+                    className="relative h-16 w-16 overflow-hidden rounded-lg border border-gray-200 bg-[#FAFAFA]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt={`input ${i + 1}`} className="block h-full w-full object-cover" />
+                    {isLocalSlot && (
+                      <button
+                        onClick={() => updateNodeData(id, { inputFile: null, inputUrl: null })}
+                        title="Remove"
+                        className="nodrag absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              <span className="text-[10px] text-gray-400 tabular-nums">{imageDisplay.length}/3</span>
             </div>
           )}
         </div>

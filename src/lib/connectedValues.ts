@@ -46,7 +46,9 @@ export function resolveConnectedValue(
     sourceNode.type === "generateImage" ||
     sourceNode.type === "generateVideo" ||
     sourceNode.type === "enhanceVideo" ||
-    sourceNode.type === "extendVideo"
+    sourceNode.type === "extendVideo" ||
+    sourceNode.type === "generateAudio" ||
+    sourceNode.type === "muxAudioVideo"
   ) {
     return (sourceNode.data as { outputUrl?: string | null } | undefined)?.outputUrl ?? undefined;
   }

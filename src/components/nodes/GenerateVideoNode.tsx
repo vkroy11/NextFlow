@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Image as ImageIcon, Loader2, S
 import { NodeShell } from "./NodeShell";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { colorForHandle } from "@/lib/handleColors";
-import { isHandleConnected, resolveConnectedValue } from "@/lib/connectedValues";
+import { isHandleConnected, resolveAllConnectedImageUrls, resolveConnectedValue } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
 import { useWorkflowRun } from "../canvas/RunContext";
 import { MediaModal } from "./MediaModal";
@@ -23,11 +23,7 @@ type Data = {
   inputUrl?: string | null;
   outputUrl?: string | null;
   negativePrompt?: string;
-  seed?: number;
-  fps?: number;
   resolution?: string;
-  generateAudio?: boolean;
-  enhancePrompt?: boolean;
   personGeneration?: string;
 };
 
@@ -86,22 +82,19 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
   const inputConnected = isHandleConnected(edges, id, "image-input");
 
   const upstreamPrompt = resolveConnectedValue(nodes, edges, id, "prompt");
-  const upstreamInput = resolveConnectedValue(nodes, edges, id, "image-input");
 
   const promptValue =
     promptConnected && typeof upstreamPrompt === "string" ? upstreamPrompt : data?.prompt ?? "";
 
-  function pickUrl(v: unknown): string | null {
-    if (typeof v === "string") return v;
-    if (v && typeof v === "object" && "url" in v) return (v as { url: string }).url;
-    return null;
+  // Multi-image: up to 3. Slot 1 = start frame (image-to-video), 2-3 = refs.
+  const connectedImageUrls = resolveAllConnectedImageUrls(nodes, edges, id, "image-input");
+  const imageUrls: string[] = [...connectedImageUrls];
+  if (!inputConnected && (data?.inputFile?.url || data?.inputUrl)) {
+    imageUrls.push(data.inputFile?.url ?? data.inputUrl ?? "");
   }
-
-  const inputImageUrl = inputConnected
-    ? pickUrl(upstreamInput)
-    : data?.inputFile?.url ?? data?.inputUrl ?? null;
-
-  const isImageToVideo = !!inputImageUrl;
+  const imageDisplay = imageUrls.slice(0, 3);
+  const imagesAtCap = connectedImageUrls.length >= 3;
+  const isImageToVideo = imageUrls.length > 0;
 
   async function uploadStartImage(file: File) {
     setUploading(true);
@@ -184,12 +177,12 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
             }}
           />
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-900">Start Image</span>
-            <span className="text-[10px] text-gray-400">optional — image-to-video</span>
+            <span className="text-xs font-medium text-gray-900">Input Images</span>
+            <span className="text-[10px] text-gray-400">optional — slot 1 = start, 2-3 = refs</span>
           </div>
-          {inputConnected ? (
+          {imagesAtCap ? (
             <div className="inline-flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-[#FAFAFA] px-3 py-2 text-[12px] font-medium text-gray-400">
-              <ImageIcon className="h-3.5 w-3.5" /> Connected
+              <ImageIcon className="h-3.5 w-3.5" /> 3 connected
             </div>
           ) : (
             <label
@@ -217,25 +210,44 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
               ) : (
                 <>
                   <Upload className="h-3.5 w-3.5" />
-                  {inputImageUrl ? "Change image" : "Upload start image"}
+                  {data?.inputFile?.url || data?.inputUrl ? "Change image" : "Upload start image"}
                 </>
               )}
             </label>
           )}
-          {inputImageUrl && !inputConnected && (
-            <div className="relative mt-2 overflow-hidden rounded-lg border border-gray-200">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={inputImageUrl} alt="start frame" className="block max-h-24 w-full object-cover" />
-              <button
-                onClick={() => updateNodeData(id, { inputFile: null, inputUrl: null })}
-                className="nodrag absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-500"
-              >
-                <X className="h-3 w-3" />
-              </button>
+          {imageDisplay.length > 0 && (
+            <div className="mt-2 flex items-center justify-end gap-2">
+              {imageDisplay.map((url, i) => {
+                const isLocalSlot =
+                  !inputConnected &&
+                  !!(data?.inputFile?.url || data?.inputUrl) &&
+                  url === (data?.inputFile?.url ?? data?.inputUrl);
+                return (
+                  <div
+                    key={`${url.slice(0, 32)}-${i}`}
+                    className="relative h-16 w-16 overflow-hidden rounded-lg border border-gray-200 bg-[#FAFAFA]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt={`input ${i + 1}`} className="block h-full w-full object-cover" />
+                    {isLocalSlot && (
+                      <button
+                        onClick={() => updateNodeData(id, { inputFile: null, inputUrl: null })}
+                        title="Remove"
+                        className="nodrag absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              <span className="text-[10px] text-gray-400 tabular-nums">{imageDisplay.length}/3</span>
             </div>
           )}
           {isImageToVideo && (
-            <p className="mt-1 text-[10px] text-indigo-600">Image-to-video mode active</p>
+            <p className="mt-1 text-[10px] text-indigo-600">
+              {imageUrls.length > 1 ? "Image-to-video + references" : "Image-to-video mode"}
+            </p>
           )}
         </div>
 
@@ -298,81 +310,24 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
               className="nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-gray-600">Seed</span>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={data?.seed ?? ""}
-              onChange={(e) =>
-                updateNodeData(id, {
-                  seed: e.target.value === "" ? undefined : Number(e.target.value),
-                })
-              }
-              placeholder="random"
-              className="nodrag w-full rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
-            />
-          </label>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <span className="mb-1 block text-[11px] font-medium text-gray-600">FPS</span>
-              <div className="flex gap-1">
-                {([24, 30] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => updateNodeData(id, { fps: data?.fps === f ? undefined : f })}
-                    className={cn(
-                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
-                      data?.fps === f
-                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
-                    )}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
+          <div>
+            <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
+            <div className="flex gap-1">
+              {(["720p", "1080p"] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => updateNodeData(id, { resolution: data?.resolution === r ? undefined : r })}
+                  className={cn(
+                    "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                    data?.resolution === r
+                      ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                      : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
-            <div className="flex-1">
-              <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
-              <div className="flex gap-1">
-                {(["720p", "1080p"] as const).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => updateNodeData(id, { resolution: data?.resolution === r ? undefined : r })}
-                    className={cn(
-                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
-                      data?.resolution === r
-                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
-                    )}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            <label className="nodrag flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={data?.generateAudio ?? false}
-                onChange={(e) => updateNodeData(id, { generateAudio: e.target.checked })}
-                className="rounded accent-indigo-500"
-              />
-              <span className="text-[11px] font-medium text-gray-600">Generate Audio</span>
-            </label>
-            <label className="nodrag flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={data?.enhancePrompt ?? false}
-                onChange={(e) => updateNodeData(id, { enhancePrompt: e.target.checked })}
-                className="rounded accent-indigo-500"
-              />
-              <span className="text-[11px] font-medium text-gray-600">Enhance Prompt</span>
-            </label>
           </div>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium text-gray-600">Person Generation</span>

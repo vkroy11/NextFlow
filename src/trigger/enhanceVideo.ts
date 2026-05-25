@@ -23,9 +23,6 @@ export type EnhanceVideoPayload = {
   durationSeconds?: number;
   aspectRatio?: string;
   negativePrompt?: string;
-  seed?: number;
-  generateAudio?: boolean;
-
 };
 
 export type EnhanceVideoOutput = { url: string; veoFileUri?: string };
@@ -111,9 +108,6 @@ export async function runEnhanceVideo(
         aspectRatio: payload.aspectRatio ?? "16:9",
         numberOfVideos: 1,
         ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
-        ...(payload.seed != null ? { seed: payload.seed } : {}),
-        ...(payload.generateAudio != null ? { generateAudio: payload.generateAudio } : {}),
-
       },
     });
 

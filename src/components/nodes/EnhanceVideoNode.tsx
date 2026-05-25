@@ -23,9 +23,6 @@ type Data = {
   durationSeconds?: number;
   aspectRatio?: string;
   negativePrompt?: string;
-  seed?: number;
-  generateAudio?: boolean;
-  enhancePrompt?: boolean;
 };
 
 const DURATIONS = [4, 6, 8] as const;
@@ -293,42 +290,6 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
               className="nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-gray-600">Seed</span>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={data?.seed ?? ""}
-              onChange={(e) =>
-                updateNodeData(id, {
-                  seed: e.target.value === "" ? undefined : Number(e.target.value),
-                })
-              }
-              placeholder="random"
-              className="nodrag w-full rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
-            />
-          </label>
-          <div className="flex flex-col gap-2">
-            <label className="nodrag flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={data?.generateAudio ?? false}
-                onChange={(e) => updateNodeData(id, { generateAudio: e.target.checked })}
-                className="rounded accent-purple-500"
-              />
-              <span className="text-[11px] font-medium text-gray-600">Generate Audio</span>
-            </label>
-            <label className="nodrag flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={data?.enhancePrompt ?? false}
-                onChange={(e) => updateNodeData(id, { enhancePrompt: e.target.checked })}
-                className="rounded accent-purple-500"
-              />
-              <span className="text-[11px] font-medium text-gray-600">Enhance Prompt</span>
-            </label>
-          </div>
         </Collapsible>
 
         {/* Output */}

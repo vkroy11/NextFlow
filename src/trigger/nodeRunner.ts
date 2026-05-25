@@ -7,6 +7,8 @@ import { runGenerateImage, type GenerateImagePayload } from "./generateImage";
 import { runGenerateVideo, type GenerateVideoPayload } from "./generateVideo";
 import { runEnhanceVideo, type EnhanceVideoPayload } from "./enhanceVideo";
 import { runExtendVideo, type ExtendVideoPayload } from "./extendVideo";
+import { runGenerateAudio, type GenerateAudioPayload } from "./generateAudio";
+import { runMuxAudioVideo, type MuxAudioVideoPayload } from "./muxAudioVideo";
 import {
   runInput,
   runRequestInputs,
@@ -448,8 +450,13 @@ async function executeWorker(args: {
         nodeId,
         "system_prompt",
       );
-      const inputImageUrl =
-        resolveImageInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputUrl ?? null;
+      const connectedImages = resolveAllImageInputs(parentIds, parentByEdge, edges, nodeId);
+      const inputImageUrls = (connectedImages.length > 0
+        ? connectedImages
+        : data.inputUrl
+          ? [data.inputUrl]
+          : []
+      ).slice(0, 3);
       const prompt = promptOverride ?? data.prompt ?? "";
       if (!prompt.trim()) {
         await prisma.nodeRun.update({
@@ -468,7 +475,7 @@ async function executeWorker(args: {
         nodeId,
         model: data.model ?? "gemini-3-pro-image-preview",
         prompt,
-        inputImageUrl,
+        inputImageUrls,
         aspectRatio: data.aspectRatio,
         systemPrompt: (systemPromptOverride ?? data.systemPrompt) || undefined,
         seed: data.seed,
@@ -485,15 +492,17 @@ async function executeWorker(args: {
         aspectRatio?: string;
         inputUrl?: string | null;
         negativePrompt?: string;
-        seed?: number;
-        fps?: number;
         resolution?: string;
-        generateAudio?: boolean;
         personGeneration?: string;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
-      const inputImageUrl =
-        resolveImageInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputUrl ?? null;
+      const connectedImages = resolveAllImageInputs(parentIds, parentByEdge, edges, nodeId);
+      const inputImageUrls = (connectedImages.length > 0
+        ? connectedImages
+        : data.inputUrl
+          ? [data.inputUrl]
+          : []
+      ).slice(0, 3);
       const prompt = promptOverride ?? data.prompt ?? "";
       if (!prompt.trim()) {
         await prisma.nodeRun.update({
@@ -512,14 +521,11 @@ async function executeWorker(args: {
         nodeId,
         model: data.model ?? "veo-3.1-generate-preview",
         prompt,
-        inputImageUrl,
+        inputImageUrls,
         durationSeconds: data.durationSeconds ?? 6,
         aspectRatio: data.aspectRatio ?? "16:9",
         negativePrompt: data.negativePrompt,
-        seed: data.seed,
-        fps: data.fps,
         resolution: data.resolution,
-        generateAudio: data.generateAudio,
         personGeneration: data.personGeneration,
       };
       return await runGenerateVideo(genVideoPayload);
@@ -533,8 +539,6 @@ async function executeWorker(args: {
         durationSeconds?: number;
         aspectRatio?: string;
         negativePrompt?: string;
-        seed?: number;
-        generateAudio?: boolean;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
       const inputVideoUrl =
@@ -560,8 +564,6 @@ async function executeWorker(args: {
         durationSeconds: data.durationSeconds,
         aspectRatio: data.aspectRatio,
         negativePrompt: data.negativePrompt,
-        seed: data.seed,
-        generateAudio: data.generateAudio,
       };
       return await runEnhanceVideo(enhancePayload);
     }
@@ -574,10 +576,7 @@ async function executeWorker(args: {
         durationSeconds?: number;
         aspectRatio?: string;
         negativePrompt?: string;
-        seed?: number;
-        fps?: number;
         resolution?: string;
-        generateAudio?: boolean;
         personGeneration?: string;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
@@ -606,13 +605,66 @@ async function executeWorker(args: {
         durationSeconds: data.durationSeconds ?? 8,
         aspectRatio: data.aspectRatio ?? "16:9",
         negativePrompt: data.negativePrompt,
-        seed: data.seed,
-        fps: data.fps,
         resolution: data.resolution,
-        generateAudio: data.generateAudio,
         personGeneration: data.personGeneration,
       };
       return await runExtendVideo(extendPayload);
+    }
+
+    case "generateAudio": {
+      const data = (node.data ?? {}) as {
+        prompt?: string;
+        voiceName?: string;
+        accent?: string;
+        model?: string;
+      };
+      const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
+      const prompt = promptOverride ?? data.prompt ?? "";
+      if (!prompt.trim()) {
+        await prisma.nodeRun.update({
+          where: { id: nodeRunId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: `generateAudio ${nodeId}: prompt (script) is required`,
+          },
+        });
+        throw new Error(`generateAudio ${nodeId}: prompt is required`);
+      }
+      const audioPayload: GenerateAudioPayload = {
+        workflowRunId,
+        nodeRunId,
+        nodeId,
+        prompt,
+        voiceName: data.voiceName ?? "Kore",
+        accent: data.accent,
+        model: data.model,
+      };
+      return await runGenerateAudio(audioPayload);
+    }
+
+    case "muxAudioVideo": {
+      const videoUrl = resolveVideoInput(parentIds, parentByEdge, edges, nodeId);
+      const audioUrl = resolveAudioInput(parentIds, parentByEdge, edges, nodeId);
+      if (!videoUrl || !audioUrl) {
+        await prisma.nodeRun.update({
+          where: { id: nodeRunId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: `muxAudioVideo ${nodeId}: both video and audio inputs are required`,
+          },
+        });
+        throw new Error(`muxAudioVideo ${nodeId}: missing inputs`);
+      }
+      const muxPayload: MuxAudioVideoPayload = {
+        workflowRunId,
+        nodeRunId,
+        nodeId,
+        videoUrl,
+        audioUrl,
+      };
+      return await runMuxAudioVideo(muxPayload);
     }
 
     case "stickyNote": {
@@ -682,15 +734,26 @@ function resolveAllImageInputs(
   parentByEdge: Record<string, NodeOutput>,
   edges: CanvasEdge[],
   childId: string,
+  targetHandleHint = "image",
 ): string[] {
   const urls: string[] = [];
   for (const pid of parentIds) {
     for (const edge of findEdgeFromParent(pid, childId, edges)) {
       const targetHandle = (edge.targetHandle ?? "").toLowerCase();
-      if (!targetHandle.includes("vision") && !targetHandle.includes("image")) continue;
+      // Accept any handle that hints at images. Callers pass a hint like
+      // "image" or "vision" to scope which target handles count.
+      if (
+        !targetHandle.includes(targetHandleHint) &&
+        !targetHandle.includes("vision") &&
+        !targetHandle.includes("image") &&
+        !targetHandle.includes("input")
+      ) {
+        continue;
+      }
       const out = parentByEdge[pid];
       if (!out) continue;
       if (out.kind === "cropImage") urls.push(out.output.url);
+      else if (out.kind === "generateImage") urls.push(out.output.url);
       else if (out.kind === "requestInputs") {
         const sourceHandle = (edge.sourceHandle ?? "").toLowerCase();
         const v = out.output.fields[sourceHandle];
@@ -777,6 +840,38 @@ function resolveVideoInput(
     if (out.kind === "generateVideo") return out.output.url;
     if (out.kind === "enhanceVideo") return out.output.url;
     if (out.kind === "extendVideo") return out.output.url;
+    if (out.kind === "muxAudioVideo") return out.output.url;
+    if (out.kind === "requestInputs") {
+      const handle = (edge.sourceHandle ?? "").toLowerCase();
+      const v = out.output.fields[handle];
+      if (typeof v === "object" && v && "url" in v) return (v as { url: string }).url;
+      if (typeof v === "string") return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a single audio URL flowing into `childId`. Mirrors
+ * `resolveVideoInput` but matches handles hinting at audio (the muxer's
+ * `audio-input` handle, requestInputs audio fields, etc.).
+ */
+function resolveAudioInput(
+  parentIds: string[],
+  parentByEdge: Record<string, NodeOutput>,
+  edges: CanvasEdge[],
+  childId: string,
+): string | null {
+  for (const pid of parentIds) {
+    const edge = findEdgeFromParent(pid, childId, edges).find(
+      (e) =>
+        (e.targetHandle ?? "").toLowerCase().includes("audio") ||
+        (e.sourceHandle ?? "").toLowerCase().includes("audio"),
+    );
+    if (!edge) continue;
+    const out = parentByEdge[pid];
+    if (!out) continue;
+    if (out.kind === "generateAudio") return out.output.url;
     if (out.kind === "requestInputs") {
       const handle = (edge.sourceHandle ?? "").toLowerCase();
       const v = out.output.fields[handle];

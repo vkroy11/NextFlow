@@ -12,6 +12,7 @@ import type { Prisma } from "@prisma/client";
 
 const execFileP = promisify(execFile);
 const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
+const FFPROBE = process.env.FFPROBE_PATH || "ffprobe";
 
 export type ExtendVideoPayload = {
   workflowRunId: string;
@@ -20,38 +21,40 @@ export type ExtendVideoPayload = {
   model: string;
   prompt: string;
   inputVideoUrl: string;
-  /**
-   * Optional Veo Files API URI from a direct upstream `generateVideo` /
-   * `enhanceVideo`. When present we attempt native Veo extension first;
-   * if that fails (expired URI, model rejection, etc.) we fall back to
-   * the last-frame image-to-video approach.
-   */
   inputVeoFileUri?: string;
   durationSeconds: number;
   aspectRatio: string;
   negativePrompt?: string;
-  seed?: number;
-  fps?: number;
   resolution?: string;
-  generateAudio?: boolean;
-
   personGeneration?: string;
 };
 
 export type ExtendVideoOutput = { url: string };
 
+async function ffprobeDuration(path: string): Promise<number> {
+  const { stdout } = await execFileP(FFPROBE, [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    path,
+  ]);
+  const n = Number(stdout.trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
- * Worker for the extendVideo node — hybrid strategy.
+ * Worker for the extendVideo node.
  *
- * 1. If `inputVeoFileUri` is set (upstream is a fresh Veo node), attempt
- *    native Veo extension: pass `video: { uri }` directly. This produces
- *    the cleanest result but only works for Veo-generated inputs.
- * 2. On any failure (or when no Veo URI is available — uploads, cross-graph
- *    inputs, expired URIs), fall back to image-to-video: extract the last
- *    frame of the input video and seed a new generation from it.
+ * 1. Native path: when `inputVeoFileUri` is set, call Veo with
+ *    `video: { uri }`. Veo may return the *full* extended video (input +
+ *    new segment already merged) or only the continuation, depending on
+ *    model behavior. We `ffprobe` the result and only concat if the
+ *    returned clip is short enough to be just the continuation.
+ * 2. Fallback path: extract last frame, image-to-video, then always concat.
  *
- * Either way, FFmpeg stitches the original input video and the new
- * segment so the output is the full combined video.
+ * Either path ends with an audio remux step that copies the input video's
+ * audio track onto the final output (Veo on the Gemini Developer API does
+ * not generate audio, so we always need to bring the original audio across).
  */
 export async function runExtendVideo(
   payload: ExtendVideoPayload,
@@ -82,19 +85,21 @@ export async function runExtendVideo(
 
   const workdir = await mkdtemp(join(tmpdir(), "nf-extend-"));
   try {
-    // Always download the input video — we need it for both branches:
-    // (a) FFmpeg concat at the end, (b) last-frame extraction in fallback.
+    // Always download the input video to disk — needed for ffprobe,
+    // concat, last-frame extraction, and the final audio remux.
     const videoRes = await fetch(payload.inputVideoUrl);
     if (!videoRes.ok) {
       throw new Error(`fetch input video: ${videoRes.status} ${videoRes.statusText}`);
     }
     const inputPath = join(workdir, "input.mp4");
     await writeFile(inputPath, Buffer.from(await videoRes.arrayBuffer()));
+    const inputDuration = await ffprobeDuration(inputPath);
 
     const ai = googleAI();
 
-    // Attempt 1: native Veo extension via the upstream URI.
-    let continuationBuf: Buffer | null = null;
+    // ---------- Attempt 1: native Veo extension ----------
+    let veoOutputPath: string | null = null;
+    let nativeMerged = false;
     let nativeError: string | null = null;
 
     if (payload.inputVeoFileUri) {
@@ -104,7 +109,7 @@ export async function runExtendVideo(
           prompt: payload.prompt,
           video: { uri: payload.inputVeoFileUri },
           config: {
-            durationSeconds: 8, // Veo native extension requires 8 s.
+            durationSeconds: 8, // Native extension requires 8 s.
             aspectRatio: payload.aspectRatio,
             numberOfVideos: 1,
             ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
@@ -125,31 +130,38 @@ export async function runExtendVideo(
         const generated = operation.response?.generatedVideos?.[0];
         if (!generated?.video) throw new Error("native Veo extension returned no video");
 
+        const nativePath = join(workdir, "veo-native.mp4");
         if (generated.video.videoBytes) {
-          continuationBuf = Buffer.from(generated.video.videoBytes as string, "base64");
+          await writeFile(nativePath, Buffer.from(generated.video.videoBytes as string, "base64"));
         } else if (generated.video.uri) {
-          const tempPath = join(workdir, "veo-native.mp4");
-          await ai.files.download({ file: generated, downloadPath: tempPath });
-          continuationBuf = await readFile(tempPath);
+          await ai.files.download({ file: generated, downloadPath: nativePath });
         } else {
           throw new Error("native Veo extension: no videoBytes or uri");
         }
+
+        const nativeDuration = await ffprobeDuration(nativePath);
+        // If Veo returned the merged video (input + extension) we expect
+        // its duration to be at least the input's duration plus a few
+        // seconds. If it's much shorter, we got just the continuation.
+        if (nativeDuration >= inputDuration + 3) {
+          nativeMerged = true;
+        }
+        veoOutputPath = nativePath;
       } catch (err) {
         nativeError = err instanceof Error ? err.message : String(err);
-        continuationBuf = null;
+        veoOutputPath = null;
       }
     }
 
-    // Attempt 2 (fallback): last-frame image-to-video.
-    if (!continuationBuf) {
+    // ---------- Attempt 2: fallback last-frame image-to-video ----------
+    if (!veoOutputPath) {
       const lastFramePath = join(workdir, "last.jpg");
       await execFileP(
         FFMPEG,
         ["-y", "-sseof", "-0.5", "-i", inputPath, "-vframes", "1", "-q:v", "2", lastFramePath],
         { timeout: 60_000 },
       );
-      const lastFrameBuf = await readFile(lastFramePath);
-      const lastFrameB64 = lastFrameBuf.toString("base64");
+      const lastFrameB64 = (await readFile(lastFramePath)).toString("base64");
 
       const continuationPrompt = payload.prompt
         ? `Continue the scene naturally. ${payload.prompt}`
@@ -178,45 +190,67 @@ export async function runExtendVideo(
       }
       if (!operation.done) {
         throw new Error(
-          `Veo extension timed out (fallback path)${nativeError ? `; native attempt: ${nativeError}` : ""}`,
+          `Veo extension timed out (fallback)${nativeError ? `; native: ${nativeError}` : ""}`,
         );
       }
 
       const generated = operation.response?.generatedVideos?.[0];
       if (!generated?.video) throw new Error("Veo fallback returned no video");
 
+      const fallbackPath = join(workdir, "veo-fallback.mp4");
       if (generated.video.videoBytes) {
-        continuationBuf = Buffer.from(generated.video.videoBytes as string, "base64");
+        await writeFile(fallbackPath, Buffer.from(generated.video.videoBytes as string, "base64"));
       } else if (generated.video.uri) {
-        const tempPath = join(workdir, "veo-fallback.mp4");
-        await ai.files.download({ file: generated, downloadPath: tempPath });
-        continuationBuf = await readFile(tempPath);
+        await ai.files.download({ file: generated, downloadPath: fallbackPath });
       } else {
         throw new Error("Veo fallback: no videoBytes or uri");
       }
+      veoOutputPath = fallbackPath;
     }
 
-    // Stitch original + continuation. Video-only concat skips audio so a
-    // missing/extra audio track on either side never breaks the merge.
-    const contPath = join(workdir, "continuation.mp4");
-    await writeFile(contPath, continuationBuf);
-    const outputPath = join(workdir, "merged.mp4");
+    // ---------- Concat (skip if native path already merged) ----------
+    const concatPath = join(workdir, "concat.mp4");
+    if (nativeMerged) {
+      // Already merged — just rename the path forward.
+      await execFileP(FFMPEG, ["-y", "-i", veoOutputPath, "-c", "copy", concatPath], {
+        timeout: 60_000,
+      });
+    } else {
+      await execFileP(
+        FFMPEG,
+        [
+          "-y",
+          "-i", inputPath,
+          "-i", veoOutputPath,
+          "-filter_complex", "[0:v:0][1:v:0]concat=n=2:v=1[outv]",
+          "-map", "[outv]",
+          concatPath,
+        ],
+        { timeout: 120_000 },
+      );
+    }
+
+    // ---------- Final audio remux ----------
+    // Bring the input's audio track (if any) onto the final video.
+    // `0:a:0?` makes the audio map optional — silent input still works.
+    const finalPath = join(workdir, "final.mp4");
     await execFileP(
       FFMPEG,
       [
         "-y",
-        "-i", inputPath,
-        "-i", contPath,
-        "-filter_complex", "[0:v:0][1:v:0]concat=n=2:v=1[outv]",
-        "-map", "[outv]",
-        outputPath,
+        "-i", concatPath,       // video source
+        "-i", inputPath,        // audio source (original)
+        "-map", "0:v:0",
+        "-map", "1:a:0?",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",
+        finalPath,
       ],
       { timeout: 120_000 },
     );
 
-    // Upload directly from disk — avoids holding the merged video buffer
-    // in memory, which was triggering OOM on small Trigger.dev machines.
-    const { url } = await uploadFilePathToTransloadit(outputPath);
+    const { url } = await uploadFilePathToTransloadit(finalPath);
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({

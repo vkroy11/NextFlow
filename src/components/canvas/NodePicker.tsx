@@ -166,8 +166,33 @@ const CATEGORIES: CategoryDef[] = [
         id: "gen-audio",
         label: "Generate Audio",
         items: [
+          {
+            id: "aud-gemini-tts",
+            label: "Gemini TTS",
+            icon: Music2,
+            enabled: true,
+            nodeType: "generateAudio",
+            defaultData: {
+              prompt: "",
+              voiceName: "Kore",
+            },
+          },
           { id: "aud-elevenlabs", label: "ElevenLabs v3", icon: MessageSquare, enabled: false },
           { id: "aud-suno", label: "Suno v4", icon: MessageSquare, enabled: false },
+        ],
+      },
+      {
+        id: "mux-audio",
+        label: "Mix",
+        items: [
+          {
+            id: "aud-mux-video",
+            label: "Add Audio to Video",
+            icon: Music2,
+            enabled: true,
+            nodeType: "muxAudioVideo",
+            defaultData: {},
+          },
         ],
       },
     ],

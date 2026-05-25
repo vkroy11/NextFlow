@@ -14,15 +14,18 @@ export type GenerateVideoPayload = {
   nodeId: string;
   model: string;
   prompt: string;
+  /**
+   * Up to 3 image URLs. Slot 1 (index 0) becomes Veo's `image` (start
+   * frame, image-to-video mode). Slots 2-3 are passed as `referenceImages`
+   * for style/subject consistency. `inputImageUrl` is the legacy single-
+   * image alias and is folded into `inputImageUrls[0]` if absent.
+   */
+  inputImageUrls?: string[];
   inputImageUrl?: string | null;
   durationSeconds: number;
   aspectRatio: string;
   negativePrompt?: string;
-  seed?: number;
-  fps?: number;
   resolution?: string;
-  generateAudio?: boolean;
-
   personGeneration?: string;
 };
 
@@ -48,6 +51,14 @@ export async function runGenerateVideo(
     if (typeof out.url === "string") return { url: out.url };
   }
 
+  // Normalize input images (max 3). Slot 0 → start frame; rest → references.
+  const inputUrls: string[] = (payload.inputImageUrls && payload.inputImageUrls.length > 0
+    ? payload.inputImageUrls
+    : payload.inputImageUrl
+      ? [payload.inputImageUrl]
+      : []
+  ).slice(0, 3);
+
   const startedAt = new Date();
   const inputRecord: Record<string, unknown> = {
     model: payload.model,
@@ -55,7 +66,7 @@ export async function runGenerateVideo(
     durationSeconds: payload.durationSeconds,
     aspectRatio: payload.aspectRatio,
   };
-  if (payload.inputImageUrl) inputRecord.inputImageUrl = payload.inputImageUrl;
+  if (inputUrls.length > 0) inputRecord.inputImageUrls = inputUrls;
 
   await prisma.nodeRun.update({
     where: { id: payload.nodeRunId },
@@ -66,15 +77,27 @@ export async function runGenerateVideo(
   try {
     const ai = googleAI();
 
-    // Build the optional start-image for image-to-video mode.
-    let imageParam: { imageBytes: string; mimeType: string } | undefined;
-    if (payload.inputImageUrl) {
-      const res = await fetch(payload.inputImageUrl);
-      if (!res.ok) throw new Error(`fetch start image: ${res.status} ${res.statusText}`);
+    async function fetchImageParam(url: string): Promise<{ imageBytes: string; mimeType: string }> {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`fetch image (${url}): ${res.status} ${res.statusText}`);
       const arrayBuf = await res.arrayBuffer();
       const b64 = Buffer.from(arrayBuf).toString("base64");
       const contentType = res.headers.get("content-type") ?? "image/jpeg";
-      imageParam = { imageBytes: b64, mimeType: contentType.split(";")[0] };
+      return { imageBytes: b64, mimeType: contentType.split(";")[0] };
+    }
+
+    // Slot 0 → image (start frame); slots 1-2 → referenceImages (style/subject).
+    let imageParam: { imageBytes: string; mimeType: string } | undefined;
+    let referenceImages: Array<{ image: { imageBytes: string; mimeType: string } }> | undefined;
+    if (inputUrls.length > 0) {
+      imageParam = await fetchImageParam(inputUrls[0]);
+    }
+    if (inputUrls.length > 1) {
+      const refs = [] as Array<{ image: { imageBytes: string; mimeType: string } }>;
+      for (let i = 1; i < inputUrls.length; i++) {
+        refs.push({ image: await fetchImageParam(inputUrls[i]) });
+      }
+      referenceImages = refs;
     }
 
     let operation = await ai.models.generateVideos({
@@ -85,12 +108,9 @@ export async function runGenerateVideo(
         aspectRatio: payload.aspectRatio,
         numberOfVideos: 1,
         ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
-        ...(payload.seed != null ? { seed: payload.seed } : {}),
-        ...(payload.fps != null ? { fps: payload.fps } : {}),
         ...(payload.resolution ? { resolution: payload.resolution } : {}),
-        ...(payload.generateAudio != null ? { generateAudio: payload.generateAudio } : {}),
-
         ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
+        ...(referenceImages && referenceImages.length > 0 ? { referenceImages } : {}),
       },
       ...(imageParam ? { image: imageParam } : {}),
     });

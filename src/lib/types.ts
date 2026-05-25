@@ -15,6 +15,8 @@ export const NodeTypeEnum = z.enum([
   "generateVideo",
   "enhanceVideo",
   "extendVideo",
+  "generateAudio",
+  "muxAudioVideo",
 ]);
 export type NodeType = z.infer<typeof NodeTypeEnum>;
 
