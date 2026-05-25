@@ -111,12 +111,15 @@ export async function runGenerateVideo(
       throw new Error("Veo returned no video in operation response");
     }
 
-    // Prefer base64 bytes; fall back to URI download.
+    // Prefer base64 bytes; fall back to authenticated URI download.
     let buf: Buffer;
     if (generated.video.videoBytes) {
       buf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
-      const res = await fetch(generated.video.uri);
+      const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
+      const res = await fetch(generated.video.uri, {
+        headers: { "x-goog-api-key": apiKey },
+      });
       if (!res.ok) throw new Error(`fetch Veo video URI: ${res.status}`);
       buf = Buffer.from(await res.arrayBuffer());
     } else {
