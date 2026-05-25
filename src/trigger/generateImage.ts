@@ -55,6 +55,15 @@ export async function runGenerateImage(
   try {
     const ai = googleAI();
 
+    // Remap stale model IDs from earlier preview/exp naming iterations.
+    const LEGACY_IMAGE_MODELS = new Set([
+      "gemini-2.0-flash-preview-image-generation",
+      "gemini-2.0-flash-exp-image-generation",
+    ]);
+    const model = LEGACY_IMAGE_MODELS.has(payload.model)
+      ? "gemini-2.0-flash-exp"
+      : payload.model;
+
     // Build content parts — always include the prompt; add inline image data when editing.
     type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
     const parts: Part[] = [{ text: payload.prompt }];
@@ -69,7 +78,7 @@ export async function runGenerateImage(
     }
 
     const response = await ai.models.generateContent({
-      model: payload.model,
+      model,
       contents: [{ parts }],
       config: {
         responseModalities: ["TEXT", "IMAGE"],

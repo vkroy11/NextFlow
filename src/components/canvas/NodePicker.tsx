@@ -63,7 +63,7 @@ const CATEGORIES: CategoryDef[] = [
             enabled: true,
             nodeType: "generateImage",
             defaultData: {
-              model: "gemini-2.0-flash-exp-image-generation",
+              model: "gemini-2.0-flash-exp",
               prompt: "",
               aspectRatio: "1:1",
             },
@@ -84,7 +84,7 @@ const CATEGORIES: CategoryDef[] = [
             enabled: true,
             nodeType: "generateImage",
             defaultData: {
-              model: "gemini-2.0-flash-exp-image-generation",
+              model: "gemini-2.0-flash-exp",
               prompt: "",
               aspectRatio: "1:1",
             },
