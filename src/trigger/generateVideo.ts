@@ -19,7 +19,7 @@ export type GenerateVideoPayload = {
   fps?: number;
   resolution?: string;
   generateAudio?: boolean;
-  enhancePrompt?: boolean;
+
   personGeneration?: string;
 };
 
@@ -85,7 +85,7 @@ export async function runGenerateVideo(
         ...(payload.fps != null ? { fps: payload.fps } : {}),
         ...(payload.resolution ? { resolution: payload.resolution } : {}),
         ...(payload.generateAudio != null ? { generateAudio: payload.generateAudio } : {}),
-        ...(payload.enhancePrompt != null ? { enhancePrompt: payload.enhancePrompt } : {}),
+
         ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
       },
       ...(imageParam ? { image: imageParam } : {}),

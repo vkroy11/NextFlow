@@ -9,6 +9,7 @@ import { colorForHandle } from "@/lib/handleColors";
 import { isHandleConnected, resolveConnectedValue } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
 import { useWorkflowRun } from "../canvas/RunContext";
+import { MediaModal } from "./MediaModal";
 import { cn } from "@/lib/utils";
 
 type FileVal = { url: string; name?: string };
@@ -71,6 +72,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
   const runStatus = useWorkflowStore((s) => s.runStatus[id]);
   const [uploading, setUploading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const videoConnected = isHandleConnected(edges, id, "video-input");
   const promptConnected = isHandleConnected(edges, id, "prompt");
@@ -109,6 +111,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
   }
 
   return (
+    <>
     <NodeShell
       id={id}
       title="Enhance Video"
@@ -351,15 +354,24 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
               Enhancing video…
             </div>
           ) : data?.outputUrl ? (
-            <a
-              href={data.outputUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-[12px] font-medium text-purple-700 hover:bg-purple-100"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Open enhanced video
-            </a>
+            <div className="overflow-hidden rounded-lg border border-purple-200 bg-purple-50">
+              <video
+                src={data.outputUrl}
+                className="nodrag block max-h-40 w-full cursor-pointer object-contain"
+                onClick={() => setModalOpen(true)}
+                muted
+                playsInline
+              />
+              <div className="flex items-center gap-1 border-t border-purple-100 px-2 py-1.5">
+                <button
+                  onClick={() => setModalOpen(true)}
+                  className="nodrag flex flex-1 items-center gap-1.5 text-[11px] font-medium text-purple-700 hover:text-purple-900"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  View &amp; Download
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="flex h-16 items-center justify-center rounded-lg border border-gray-100 bg-[#FAFAFA] text-[12px] text-gray-400">
               No output yet
@@ -368,5 +380,9 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
         </div>
       </div>
     </NodeShell>
+      {modalOpen && data?.outputUrl && (
+        <MediaModal url={data.outputUrl} type="video" onClose={() => setModalOpen(false)} />
+      )}
+    </>
   );
 }

@@ -9,6 +9,7 @@ import { colorForHandle } from "@/lib/handleColors";
 import { isHandleConnected, resolveConnectedValue } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
 import { useWorkflowRun } from "../canvas/RunContext";
+import { MediaModal } from "./MediaModal";
 import { cn } from "@/lib/utils";
 
 type FileVal = { url: string; name?: string };
@@ -68,6 +69,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
   const runStatus = useWorkflowStore((s) => s.runStatus[id]);
   const [uploading, setUploading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const promptConnected = isHandleConnected(edges, id, "prompt");
   const systemConnected = isHandleConnected(edges, id, "system_prompt");
@@ -108,6 +110,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
   }
 
   return (
+    <>
     <NodeShell
       id={id}
       title={isEditMode ? "Edit Image" : "Generate Image"}
@@ -351,7 +354,8 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
               <img
                 src={data.outputUrl}
                 alt="generated"
-                className="block max-h-56 w-full object-contain"
+                onClick={() => setModalOpen(true)}
+                className="nodrag block max-h-56 w-full cursor-zoom-in object-contain"
               />
             </div>
           ) : (
@@ -362,5 +366,9 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
         </div>
       </div>
     </NodeShell>
+      {modalOpen && data?.outputUrl && (
+        <MediaModal url={data.outputUrl} type="image" onClose={() => setModalOpen(false)} />
+      )}
+    </>
   );
 }

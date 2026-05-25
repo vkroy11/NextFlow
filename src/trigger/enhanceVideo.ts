@@ -25,7 +25,7 @@ export type EnhanceVideoPayload = {
   negativePrompt?: string;
   seed?: number;
   generateAudio?: boolean;
-  enhancePrompt?: boolean;
+
 };
 
 export type EnhanceVideoOutput = { url: string };
@@ -113,7 +113,7 @@ export async function runEnhanceVideo(
         ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
         ...(payload.seed != null ? { seed: payload.seed } : {}),
         ...(payload.generateAudio != null ? { generateAudio: payload.generateAudio } : {}),
-        ...(payload.enhancePrompt != null ? { enhancePrompt: payload.enhancePrompt } : {}),
+
       },
     });
 

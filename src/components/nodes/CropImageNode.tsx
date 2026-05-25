@@ -9,6 +9,7 @@ import { colorForHandle } from "@/lib/handleColors";
 import { isHandleConnected, resolveConnectedValue } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
 import { useWorkflowRun } from "../canvas/RunContext";
+import { MediaModal } from "./MediaModal";
 import { cn } from "@/lib/utils";
 
 type Data = {
@@ -73,6 +74,7 @@ export function CropImageNode({ id, data, selected }: NodeProps<Data>) {
 
   const pushToast = useWorkflowStore((s) => s.pushToast);
   const [uploading, setUploading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
 
   async function uploadInputImage(file: File) {
     setUploading(true);
@@ -87,6 +89,7 @@ export function CropImageNode({ id, data, selected }: NodeProps<Data>) {
   }
 
   return (
+    <>
     <NodeShell
       id={id}
       title="Crop Image"
@@ -271,7 +274,8 @@ export function CropImageNode({ id, data, selected }: NodeProps<Data>) {
               <img
                 src={data.outputUrl}
                 alt="cropped output"
-                className="block max-h-24 w-full rounded-lg object-contain"
+                onClick={() => setModalOpen(true)}
+                className="nodrag block max-h-24 w-full cursor-zoom-in rounded-lg object-contain"
               />
             ) : (
               "No output yet"
@@ -299,6 +303,10 @@ export function CropImageNode({ id, data, selected }: NodeProps<Data>) {
         </div>
       </div>
     </NodeShell>
+      {modalOpen && data?.outputUrl && (
+        <MediaModal url={data.outputUrl} type="image" onClose={() => setModalOpen(false)} />
+      )}
+    </>
   );
 }
 

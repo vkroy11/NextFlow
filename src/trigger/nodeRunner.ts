@@ -484,7 +484,6 @@ async function executeWorker(args: {
         fps?: number;
         resolution?: string;
         generateAudio?: boolean;
-        enhancePrompt?: boolean;
         personGeneration?: string;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
@@ -516,7 +515,6 @@ async function executeWorker(args: {
         fps: data.fps,
         resolution: data.resolution,
         generateAudio: data.generateAudio,
-        enhancePrompt: data.enhancePrompt,
         personGeneration: data.personGeneration,
       };
       return await runGenerateVideo(genVideoPayload);
@@ -532,7 +530,6 @@ async function executeWorker(args: {
         negativePrompt?: string;
         seed?: number;
         generateAudio?: boolean;
-        enhancePrompt?: boolean;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
       const inputVideoUrl =
@@ -560,7 +557,6 @@ async function executeWorker(args: {
         negativePrompt: data.negativePrompt,
         seed: data.seed,
         generateAudio: data.generateAudio,
-        enhancePrompt: data.enhancePrompt,
       };
       return await runEnhanceVideo(enhancePayload);
     }
@@ -577,7 +573,6 @@ async function executeWorker(args: {
         fps?: number;
         resolution?: string;
         generateAudio?: boolean;
-        enhancePrompt?: boolean;
         personGeneration?: string;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
@@ -608,7 +603,6 @@ async function executeWorker(args: {
         fps: data.fps,
         resolution: data.resolution,
         generateAudio: data.generateAudio,
-        enhancePrompt: data.enhancePrompt,
         personGeneration: data.personGeneration,
       };
       return await runExtendVideo(extendPayload);
