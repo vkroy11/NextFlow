@@ -113,7 +113,7 @@ export async function runExtendVideo(
       buf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
       const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
-      const res = await fetch(generated.video.uri, {
+      const res = await fetch(`${generated.video.uri}:download?alt=media`, {
         headers: { "x-goog-api-key": apiKey },
       });
       if (!res.ok) throw new Error(`fetch Veo extend URI: ${res.status}`);

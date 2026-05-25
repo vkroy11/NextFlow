@@ -112,12 +112,13 @@ export async function runGenerateVideo(
     }
 
     // Prefer base64 bytes; fall back to authenticated URI download.
+    // The URI is a metadata endpoint — append :download?alt=media for binary.
     let buf: Buffer;
     if (generated.video.videoBytes) {
       buf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
       const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
-      const res = await fetch(generated.video.uri, {
+      const res = await fetch(`${generated.video.uri}:download?alt=media`, {
         headers: { "x-goog-api-key": apiKey },
       });
       if (!res.ok) throw new Error(`fetch Veo video URI: ${res.status}`);
