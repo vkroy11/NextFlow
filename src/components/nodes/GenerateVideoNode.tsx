@@ -2,11 +2,11 @@
 
 import { useState, type ReactNode } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
-import { ChevronDown, ChevronRight, ExternalLink, Image as ImageIcon, Loader2, Settings as SettingsIcon, Upload, Video as VideoIcon, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Image as ImageIcon, Loader2, Settings as SettingsIcon, Sparkles, Upload, Video as VideoIcon, X } from "lucide-react";
 import { NodeShell } from "./NodeShell";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { colorForHandle } from "@/lib/handleColors";
-import { isHandleConnected, resolveAllConnectedImageUrls, resolveConnectedValue } from "@/lib/connectedValues";
+import { isHandleConnected, resolveAllConnectedImagesWithIds, resolveConnectedValue } from "@/lib/connectedValues";
 import { uploadFile as uploadToCdn } from "@/lib/uploadFile";
 import { useWorkflowRun } from "../canvas/RunContext";
 import { MediaModal } from "./MediaModal";
@@ -25,7 +25,15 @@ type Data = {
   negativePrompt?: string;
   resolution?: string;
   personGeneration?: string;
+  /**
+   * User-chosen ordering of image inputs. Each entry is an edge id for a
+   * connected image, or the literal "_local" for the local upload slot.
+   * Items not present in this list are appended at the end in natural order.
+   */
+  imageOrder?: string[];
 };
+
+const LOCAL_KEY = "_local";
 
 const DURATIONS = [4, 6, 8] as const;
 const ASPECT_RATIOS = ["16:9", "9:16"] as const;
@@ -87,14 +95,43 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
     promptConnected && typeof upstreamPrompt === "string" ? upstreamPrompt : data?.prompt ?? "";
 
   // Multi-image: up to 3. Slot 1 = start frame (image-to-video), 2-3 = refs.
-  const connectedImageUrls = resolveAllConnectedImageUrls(nodes, edges, id, "image-input");
-  const imageUrls: string[] = [...connectedImageUrls];
+  // Each item carries a stable `key` (edge id for connections, "_local" for
+  // the upload slot) so the user can reorder thumbnails. The `imageOrder`
+  // field on node.data is the source of truth for ordering; items missing
+  // from it fall to the end in natural order.
+  type ImageItem = { key: string; url: string; isLocal: boolean };
+  const connectedItems = resolveAllConnectedImagesWithIds(nodes, edges, id, "image-input").map(
+    ({ edgeId, url }) => ({ key: edgeId, url, isLocal: false }),
+  );
+  const itemsRaw: ImageItem[] = [...connectedItems];
   if (!inputConnected && (data?.inputFile?.url || data?.inputUrl)) {
-    imageUrls.push(data.inputFile?.url ?? data.inputUrl ?? "");
+    itemsRaw.push({
+      key: LOCAL_KEY,
+      url: data.inputFile?.url ?? data.inputUrl ?? "",
+      isLocal: true,
+    });
   }
-  const imageDisplay = imageUrls.slice(0, 3);
-  const imagesAtCap = connectedImageUrls.length >= 3;
-  const isImageToVideo = imageUrls.length > 0;
+  const order = data?.imageOrder ?? [];
+  const itemsSorted = [...itemsRaw].sort((a, b) => {
+    const ai = order.indexOf(a.key);
+    const bi = order.indexOf(b.key);
+    if (ai === -1 && bi === -1) return 0;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  const imageDisplay = itemsSorted.slice(0, 3);
+  const imagesAtCap = connectedItems.length >= 3;
+  const isImageToVideo = itemsRaw.length > 0;
+
+  function moveImage(key: string, direction: -1 | 1) {
+    const current = imageDisplay.map((i) => i.key);
+    const idx = current.indexOf(key);
+    const target = idx + direction;
+    if (idx === -1 || target < 0 || target >= current.length) return;
+    [current[idx], current[target]] = [current[target], current[idx]];
+    updateNodeData(id, { imageOrder: current });
+  }
 
   async function uploadStartImage(file: File) {
     setUploading(true);
@@ -216,37 +253,76 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
             </label>
           )}
           {imageDisplay.length > 0 && (
-            <div className="mt-2 flex items-center justify-end gap-2">
-              {imageDisplay.map((url, i) => {
-                const isLocalSlot =
-                  !inputConnected &&
-                  !!(data?.inputFile?.url || data?.inputUrl) &&
-                  url === (data?.inputFile?.url ?? data?.inputUrl);
-                return (
-                  <div
-                    key={`${url.slice(0, 32)}-${i}`}
-                    className="relative h-16 w-16 overflow-hidden rounded-lg border border-gray-200 bg-[#FAFAFA]"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={`input ${i + 1}`} className="block h-full w-full object-cover" />
-                    {isLocalSlot && (
-                      <button
-                        onClick={() => updateNodeData(id, { inputFile: null, inputUrl: null })}
-                        title="Remove"
-                        className="nodrag absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-500"
+            <div className="mt-3 space-y-2">
+              <div className="flex items-end gap-2">
+                {imageDisplay.map((item, i) => {
+                  const isFirst = i === 0;
+                  const isLast = i === imageDisplay.length - 1;
+                  return (
+                    <div key={item.key} className="flex flex-col items-center gap-1">
+                      <div
+                        className={cn(
+                          "relative h-20 w-20 overflow-hidden rounded-lg border-2 bg-[#FAFAFA]",
+                          isFirst
+                            ? "border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.18)]"
+                            : "border-gray-200",
+                        )}
                       >
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              <span className="text-[10px] text-gray-400 tabular-nums">{imageDisplay.length}/3</span>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={item.url} alt={`input ${i + 1}`} className="block h-full w-full object-cover" />
+                        {isFirst && (
+                          <div className="absolute left-0 right-0 top-0 flex items-center justify-center gap-1 bg-indigo-600/90 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-white">
+                            <Sparkles className="h-2.5 w-2.5" />
+                            Start frame
+                          </div>
+                        )}
+                        {!isFirst && (
+                          <div className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-900/70 text-[9px] font-semibold text-white">
+                            {i + 1}
+                          </div>
+                        )}
+                        {item.isLocal && (
+                          <button
+                            onClick={() => updateNodeData(id, { inputFile: null, inputUrl: null })}
+                            title="Remove"
+                            className="nodrag absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-500"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        )}
+                      </div>
+                      {imageDisplay.length > 1 && (
+                        <div className="flex gap-0.5">
+                          <button
+                            onClick={() => moveImage(item.key, -1)}
+                            disabled={isFirst}
+                            title="Move left"
+                            className="nodrag flex h-5 w-5 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            <ChevronLeft className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={() => moveImage(item.key, 1)}
+                            disabled={isLast}
+                            title="Move right"
+                            className="nodrag flex h-5 w-5 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            <ChevronRight className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <span className="ml-auto text-[10px] text-gray-400 tabular-nums">
+                  {imageDisplay.length}/3
+                </span>
+              </div>
             </div>
           )}
           {isImageToVideo && (
             <p className="mt-1 text-[10px] text-indigo-600">
-              {imageUrls.length > 1 ? "Image-to-video + references" : "Image-to-video mode"}
+              {itemsRaw.length > 1 ? "Image-to-video + references" : "Image-to-video mode"}
             </p>
           )}
         </div>

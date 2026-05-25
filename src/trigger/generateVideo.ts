@@ -2,6 +2,7 @@ import { wait } from "@trigger.dev/sdk/v3";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { VideoGenerationReferenceType } from "@google/genai";
 import { googleAI } from "@/lib/googleai";
 import { uploadBufferToTransloadit } from "@/lib/transloadit";
 import { prisma } from "@/lib/prisma";
@@ -86,16 +87,26 @@ export async function runGenerateVideo(
       return { imageBytes: b64, mimeType: contentType.split(";")[0] };
     }
 
-    // Slot 0 → image (start frame); slots 1-2 → referenceImages (style/subject).
+    // Slot 0 → image (start frame); slots 1-2 → referenceImages.
+    // Veo's referenceImages payload requires `referenceType` per entry.
+    // "ASSET" covers subjects/objects/characters and is the right default
+    // for "use these as visual references for the generation".
+    type RefImage = {
+      image: { imageBytes: string; mimeType: string };
+      referenceType: VideoGenerationReferenceType;
+    };
     let imageParam: { imageBytes: string; mimeType: string } | undefined;
-    let referenceImages: Array<{ image: { imageBytes: string; mimeType: string } }> | undefined;
+    let referenceImages: RefImage[] | undefined;
     if (inputUrls.length > 0) {
       imageParam = await fetchImageParam(inputUrls[0]);
     }
     if (inputUrls.length > 1) {
-      const refs = [] as Array<{ image: { imageBytes: string; mimeType: string } }>;
+      const refs: RefImage[] = [];
       for (let i = 1; i < inputUrls.length; i++) {
-        refs.push({ image: await fetchImageParam(inputUrls[i]) });
+        refs.push({
+          image: await fetchImageParam(inputUrls[i]),
+          referenceType: VideoGenerationReferenceType.ASSET,
+        });
       }
       referenceImages = refs;
     }

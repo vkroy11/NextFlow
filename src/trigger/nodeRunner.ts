@@ -450,12 +450,12 @@ async function executeWorker(args: {
         nodeId,
         "system_prompt",
       );
-      const connectedImages = resolveAllImageInputs(parentIds, parentByEdge, edges, nodeId);
-      const inputImageUrls = (connectedImages.length > 0
-        ? connectedImages
-        : data.inputUrl
-          ? [data.inputUrl]
-          : []
+      const connectedItems = resolveAllImageInputsWithIds(parentIds, parentByEdge, edges, nodeId);
+      const localImageUrl = data.inputUrl ?? null;
+      const inputImageUrls = applyImageOrder(
+        connectedItems,
+        (node.data as { imageOrder?: string[] } | undefined)?.imageOrder,
+        connectedItems.length === 0 ? localImageUrl : null,
       ).slice(0, 3);
       const prompt = promptOverride ?? data.prompt ?? "";
       if (!prompt.trim()) {
@@ -496,12 +496,16 @@ async function executeWorker(args: {
         personGeneration?: string;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
-      const connectedImages = resolveAllImageInputs(parentIds, parentByEdge, edges, nodeId);
-      const inputImageUrls = (connectedImages.length > 0
-        ? connectedImages
-        : data.inputUrl
-          ? [data.inputUrl]
-          : []
+      const connectedItems = resolveAllImageInputsWithIds(parentIds, parentByEdge, edges, nodeId);
+      const localImageUrl = data.inputUrl ?? null;
+      // Apply the user-chosen ordering from the canvas thumbnails so slot 1
+      // (start frame) matches what they see in the UI. Local upload is only
+      // included when nothing is connected — connecting a source replaces
+      // the upload, same convention as the rest of the node types.
+      const inputImageUrls = applyImageOrder(
+        connectedItems,
+        (node.data as { imageOrder?: string[] } | undefined)?.imageOrder,
+        connectedItems.length === 0 ? localImageUrl : null,
       ).slice(0, 3);
       const prompt = promptOverride ?? data.prompt ?? "";
       if (!prompt.trim()) {
@@ -729,19 +733,17 @@ function resolveImageInput(
   return null;
 }
 
-function resolveAllImageInputs(
+function resolveAllImageInputsWithIds(
   parentIds: string[],
   parentByEdge: Record<string, NodeOutput>,
   edges: CanvasEdge[],
   childId: string,
   targetHandleHint = "image",
-): string[] {
-  const urls: string[] = [];
+): Array<{ edgeId: string; url: string }> {
+  const items: Array<{ edgeId: string; url: string }> = [];
   for (const pid of parentIds) {
     for (const edge of findEdgeFromParent(pid, childId, edges)) {
       const targetHandle = (edge.targetHandle ?? "").toLowerCase();
-      // Accept any handle that hints at images. Callers pass a hint like
-      // "image" or "vision" to scope which target handles count.
       if (
         !targetHandle.includes(targetHandleHint) &&
         !targetHandle.includes("vision") &&
@@ -752,17 +754,57 @@ function resolveAllImageInputs(
       }
       const out = parentByEdge[pid];
       if (!out) continue;
-      if (out.kind === "cropImage") urls.push(out.output.url);
-      else if (out.kind === "generateImage") urls.push(out.output.url);
+      let url: string | null = null;
+      if (out.kind === "cropImage") url = out.output.url;
+      else if (out.kind === "generateImage") url = out.output.url;
       else if (out.kind === "requestInputs") {
         const sourceHandle = (edge.sourceHandle ?? "").toLowerCase();
         const v = out.output.fields[sourceHandle];
-        if (typeof v === "object" && v && "url" in v) urls.push((v as { url: string }).url);
-        else if (typeof v === "string" && v.startsWith("http")) urls.push(v);
+        if (typeof v === "object" && v && "url" in v) url = (v as { url: string }).url;
+        else if (typeof v === "string" && v.startsWith("http")) url = v;
       }
+      if (url) items.push({ edgeId: edge.id, url });
     }
   }
-  return urls;
+  return items;
+}
+
+function resolveAllImageInputs(
+  parentIds: string[],
+  parentByEdge: Record<string, NodeOutput>,
+  edges: CanvasEdge[],
+  childId: string,
+  targetHandleHint = "image",
+): string[] {
+  return resolveAllImageInputsWithIds(parentIds, parentByEdge, edges, childId, targetHandleHint).map(
+    (i) => i.url,
+  );
+}
+
+/**
+ * Apply a user-defined ordering (from `imageOrder` on node.data) to a list
+ * of resolved image items. Items not in the order list fall to the end in
+ * their natural sequence. Used by `generateVideo` so slot 1 = start frame
+ * matches what the user sees in the canvas thumbnails.
+ */
+function applyImageOrder(
+  items: Array<{ edgeId: string; url: string }>,
+  imageOrder: string[] | undefined,
+  localUrl: string | null,
+): string[] {
+  const all: Array<{ key: string; url: string }> = items.map((i) => ({ key: i.edgeId, url: i.url }));
+  if (localUrl) all.push({ key: "_local", url: localUrl });
+  if (!imageOrder || imageOrder.length === 0) return all.map((a) => a.url);
+  return [...all]
+    .sort((a, b) => {
+      const ai = imageOrder.indexOf(a.key);
+      const bi = imageOrder.indexOf(b.key);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    })
+    .map((a) => a.url);
 }
 
 function resolveNumberInput(

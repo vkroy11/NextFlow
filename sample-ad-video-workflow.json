@@ -1,0 +1,251 @@
+{
+  "name": "Reference-image → ad video + voiceover",
+  "nodes": [
+    {
+      "id": "request-inputs-1",
+      "type": "requestInputs",
+      "position": { "x": 0, "y": 200 },
+      "width": 380,
+      "height": 380,
+      "deletable": false,
+      "data": {
+        "fields": [
+          {
+            "key": "image_field",
+            "type": "image",
+            "label": "image_field",
+            "value": null
+          },
+          {
+            "key": "image_field_2",
+            "type": "image",
+            "label": "image_field_2",
+            "value": null
+          },
+          {
+            "key": "image_field_3",
+            "type": "image",
+            "label": "image_field_3",
+            "value": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "gemini-video-script",
+      "type": "gemini",
+      "position": { "x": 480, "y": -100 },
+      "width": 380,
+      "height": 780,
+      "data": {
+        "model": "gemini-3.1-pro",
+        "prompt": "Study the reference images and write a single, vivid prompt for a ~15-second cinematic ad video. Describe a continuous on-screen scene (camera moves, subject, lighting, mood) that uses the products / people / setting visible in the reference images. Return only the prompt text — no preface, no lists.",
+        "systemPrompt": "You are a video director writing concise Veo prompts. Output one continuous shot description, ~50 words, written as a single paragraph. Do not include captions, sound effects, or narration in this prompt — those will be handled separately.",
+        "temperature": 0.7
+      }
+    },
+    {
+      "id": "gemini-audio-script",
+      "type": "gemini",
+      "position": { "x": 480, "y": 720 },
+      "width": 380,
+      "height": 780,
+      "data": {
+        "model": "gemini-3.1-pro",
+        "prompt": "Study the reference images and write a 15-second voiceover script. The script must take ~15 seconds to read at a natural pace (around 35-40 words). It should feel like a polished ad voiceover that fits the products / mood visible in the reference images. Return only the spoken text — no stage directions, no labels.",
+        "systemPrompt": "You are a copywriter specialising in short-form voiceover scripts. Write only the spoken text, ~35-40 words, no SSML, no narrator labels.",
+        "temperature": 0.8
+      }
+    },
+    {
+      "id": "generateVideo-1",
+      "type": "generateVideo",
+      "position": { "x": 1000, "y": -120 },
+      "width": 380,
+      "height": 820,
+      "data": {
+        "model": "veo-3.1-generate-preview",
+        "prompt": "",
+        "durationSeconds": 8,
+        "aspectRatio": "16:9"
+      }
+    },
+    {
+      "id": "extendVideo-1",
+      "type": "extendVideo",
+      "position": { "x": 1480, "y": -120 },
+      "width": 380,
+      "height": 760,
+      "data": {
+        "model": "veo-3.1-generate-preview",
+        "prompt": "Continue the scene with the same lighting, framing, and subject motion.",
+        "durationSeconds": 8,
+        "aspectRatio": "16:9"
+      }
+    },
+    {
+      "id": "generateAudio-1",
+      "type": "generateAudio",
+      "position": { "x": 1000, "y": 760 },
+      "width": 380,
+      "height": 540,
+      "data": {
+        "prompt": "",
+        "voiceName": "Kore",
+        "accent": "Indian English"
+      }
+    },
+    {
+      "id": "muxAudioVideo-1",
+      "type": "muxAudioVideo",
+      "position": { "x": 1960, "y": 280 },
+      "width": 380,
+      "height": 480,
+      "data": {}
+    },
+    {
+      "id": "response-1",
+      "type": "response",
+      "position": { "x": 2440, "y": 320 },
+      "width": 380,
+      "height": 420,
+      "deletable": false,
+      "data": {
+        "result": null,
+        "results": {}
+      }
+    },
+    {
+      "id": "stickyNote-readme",
+      "type": "stickyNote",
+      "position": { "x": 0, "y": -120 },
+      "width": 380,
+      "height": 260,
+      "data": {
+        "text": "Reference-image → ad video + voiceover\n\n1. Drop 1-3 reference images into the Request Inputs slots on the left.\n2. The top Gemini writes a 15s video-direction prompt; the bottom Gemini writes a 15s voiceover script.\n3. Generate Video runs Veo 3.1 (8s) and Extend Video continues it to ~16s.\n4. Generate Audio reads the voiceover script with the chosen voice.\n5. Add Audio to Video muxes them; the merge stops at the shorter input (`-shortest`) so the final clip is ~15s with synced narration."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-ref-img1-to-video-script",
+      "type": "removable",
+      "source": "request-inputs-1",
+      "target": "gemini-video-script",
+      "sourceHandle": "image_field",
+      "targetHandle": "vision",
+      "animated": true,
+      "style": { "stroke": "#06b6d4", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-ref-img2-to-video-script",
+      "type": "removable",
+      "source": "request-inputs-1",
+      "target": "gemini-video-script",
+      "sourceHandle": "image_field_2",
+      "targetHandle": "vision",
+      "animated": true,
+      "style": { "stroke": "#06b6d4", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-ref-img3-to-video-script",
+      "type": "removable",
+      "source": "request-inputs-1",
+      "target": "gemini-video-script",
+      "sourceHandle": "image_field_3",
+      "targetHandle": "vision",
+      "animated": true,
+      "style": { "stroke": "#06b6d4", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-ref-img1-to-audio-script",
+      "type": "removable",
+      "source": "request-inputs-1",
+      "target": "gemini-audio-script",
+      "sourceHandle": "image_field",
+      "targetHandle": "vision",
+      "animated": true,
+      "style": { "stroke": "#06b6d4", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-ref-img2-to-audio-script",
+      "type": "removable",
+      "source": "request-inputs-1",
+      "target": "gemini-audio-script",
+      "sourceHandle": "image_field_2",
+      "targetHandle": "vision",
+      "animated": true,
+      "style": { "stroke": "#06b6d4", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-ref-img3-to-audio-script",
+      "type": "removable",
+      "source": "request-inputs-1",
+      "target": "gemini-audio-script",
+      "sourceHandle": "image_field_3",
+      "targetHandle": "vision",
+      "animated": true,
+      "style": { "stroke": "#06b6d4", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-video-script-to-generateVideo",
+      "type": "removable",
+      "source": "gemini-video-script",
+      "target": "generateVideo-1",
+      "sourceHandle": "response",
+      "targetHandle": "prompt",
+      "animated": true,
+      "style": { "stroke": "#f59e0b", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-audio-script-to-generateAudio",
+      "type": "removable",
+      "source": "gemini-audio-script",
+      "target": "generateAudio-1",
+      "sourceHandle": "response",
+      "targetHandle": "prompt",
+      "animated": true,
+      "style": { "stroke": "#f59e0b", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-generateVideo-to-extendVideo",
+      "type": "removable",
+      "source": "generateVideo-1",
+      "target": "extendVideo-1",
+      "sourceHandle": "video-output",
+      "targetHandle": "video-input",
+      "animated": true,
+      "style": { "stroke": "#a855f7", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-extendVideo-to-mux-video",
+      "type": "removable",
+      "source": "extendVideo-1",
+      "target": "muxAudioVideo-1",
+      "sourceHandle": "video-output",
+      "targetHandle": "video-input",
+      "animated": true,
+      "style": { "stroke": "#a855f7", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-generateAudio-to-mux-audio",
+      "type": "removable",
+      "source": "generateAudio-1",
+      "target": "muxAudioVideo-1",
+      "sourceHandle": "audio-output",
+      "targetHandle": "audio-input",
+      "animated": true,
+      "style": { "stroke": "#8b5cf6", "strokeWidth": 2 }
+    },
+    {
+      "id": "edge-mux-to-response",
+      "type": "removable",
+      "source": "muxAudioVideo-1",
+      "target": "response-1",
+      "sourceHandle": "video-output",
+      "targetHandle": "result",
+      "animated": true,
+      "style": { "stroke": "#a855f7", "strokeWidth": 2 }
+    }
+  ]
+}
