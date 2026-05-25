@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
-import { ExternalLink, Image as ImageIcon, Loader2, Upload, Video as VideoIcon, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, Image as ImageIcon, Loader2, Settings as SettingsIcon, Upload, Video as VideoIcon, X } from "lucide-react";
 import { NodeShell } from "./NodeShell";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { colorForHandle } from "@/lib/handleColors";
@@ -21,10 +21,54 @@ type Data = {
   inputFile?: FileVal | null;
   inputUrl?: string | null;
   outputUrl?: string | null;
+  negativePrompt?: string;
+  seed?: number;
+  fps?: number;
+  resolution?: string;
+  generateAudio?: boolean;
+  enhancePrompt?: boolean;
+  personGeneration?: string;
 };
 
 const DURATIONS = [4, 6, 8] as const;
 const ASPECT_RATIOS = ["16:9", "9:16"] as const;
+const PERSON_GEN_OPTIONS = [
+  { value: "allow_adult", label: "Allow Adults" },
+  { value: "allow_all", label: "Allow All" },
+  { value: "dont_allow", label: "Don't Allow" },
+] as const;
+
+function Collapsible({
+  label,
+  open,
+  onToggle,
+  children,
+  icon,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  icon?: ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="nodrag flex w-full items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-gray-900"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        )}
+        {icon}
+        {label}
+      </button>
+      {open && <div className="mt-2 space-y-3">{children}</div>}
+    </div>
+  );
+}
 
 export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
@@ -34,6 +78,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
   const pushToast = useWorkflowStore((s) => s.pushToast);
   const runStatus = useWorkflowStore((s) => s.runStatus[id]);
   const [uploading, setUploading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const promptConnected = isHandleConnected(edges, id, "prompt");
   const inputConnected = isHandleConnected(edges, id, "image-input");
@@ -191,7 +236,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
           )}
         </div>
 
-        {/* Settings row */}
+        {/* Duration + Aspect */}
         <div className="flex items-center gap-4">
           <div>
             <span className="mb-1 block text-xs font-medium text-gray-700">Duration</span>
@@ -232,6 +277,118 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
             </div>
           </div>
         </div>
+
+        {/* Settings */}
+        <Collapsible
+          label="Settings"
+          icon={<SettingsIcon className="h-3.5 w-3.5" />}
+          open={showSettings}
+          onToggle={() => setShowSettings((v) => !v)}
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-600">Negative Prompt</span>
+            <textarea
+              value={data?.negativePrompt ?? ""}
+              onChange={(e) => updateNodeData(id, { negativePrompt: e.target.value || undefined })}
+              placeholder="What to avoid in the video..."
+              rows={2}
+              className="nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-600">Seed</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={data?.seed ?? ""}
+              onChange={(e) =>
+                updateNodeData(id, {
+                  seed: e.target.value === "" ? undefined : Number(e.target.value),
+                })
+              }
+              placeholder="random"
+              className="nodrag w-full rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
+            />
+          </label>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <span className="mb-1 block text-[11px] font-medium text-gray-600">FPS</span>
+              <div className="flex gap-1">
+                {([24, 30] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => updateNodeData(id, { fps: data?.fps === f ? undefined : f })}
+                    className={cn(
+                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                      data?.fps === f
+                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex-1">
+              <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
+              <div className="flex gap-1">
+                {(["720p", "1080p"] as const).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => updateNodeData(id, { resolution: data?.resolution === r ? undefined : r })}
+                    className={cn(
+                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                      data?.resolution === r
+                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                    )}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="nodrag flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={data?.generateAudio ?? false}
+                onChange={(e) => updateNodeData(id, { generateAudio: e.target.checked })}
+                className="rounded accent-indigo-500"
+              />
+              <span className="text-[11px] font-medium text-gray-600">Generate Audio</span>
+            </label>
+            <label className="nodrag flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={data?.enhancePrompt ?? false}
+                onChange={(e) => updateNodeData(id, { enhancePrompt: e.target.checked })}
+                className="rounded accent-indigo-500"
+              />
+              <span className="text-[11px] font-medium text-gray-600">Enhance Prompt</span>
+            </label>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-600">Person Generation</span>
+            <select
+              value={data?.personGeneration ?? ""}
+              onChange={(e) =>
+                updateNodeData(id, { personGeneration: e.target.value || undefined })
+              }
+              className="nodrag rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
+            >
+              <option value="">Default</option>
+              {PERSON_GEN_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </Collapsible>
 
         {/* Output */}
         <div className="relative">

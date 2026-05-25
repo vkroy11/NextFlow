@@ -1,11 +1,13 @@
+import { wait } from "@trigger.dev/sdk/v3";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { googleAI } from "@/lib/googleai";
 import { uploadBufferToTransloadit } from "@/lib/transloadit";
 import { prisma } from "@/lib/prisma";
-import { runGenerateVideo } from "./generateVideo";
+import { rethrowClassified } from "@/lib/triggerErrors";
 import type { Prisma } from "@prisma/client";
 
 const execFileP = promisify(execFile);
@@ -18,6 +20,12 @@ export type EnhanceVideoPayload = {
   model: string;
   prompt: string;
   inputVideoUrl: string;
+  durationSeconds?: number;
+  aspectRatio?: string;
+  negativePrompt?: string;
+  seed?: number;
+  generateAudio?: boolean;
+  enhancePrompt?: boolean;
 };
 
 export type EnhanceVideoOutput = { url: string };
@@ -27,12 +35,11 @@ export type EnhanceVideoOutput = { url: string };
  *   1. Download the input video to a temp file.
  *   2. Extract the first frame using FFmpeg.
  *   3. Upload the frame to Transloadit CDN.
- *   4. Use Veo 3.1 image-to-video (from runGenerateVideo) with that frame,
- *      prompting for an enhanced, high-quality version.
+ *   4. Use Veo 3.1 image-to-video with the extracted frame and an
+ *      enhancement prompt to regenerate a high-quality version.
  *
- * This leverages Veo's image-to-video capability since Veo's native upscaling
- * API is currently in private preview only. The output is a Veo-regenerated
- * video that captures the visual content of the original first frame.
+ * Veo's native upscaling API is in private preview; this approach uses
+ * frame-extraction + image-to-video as the best available public API path.
  */
 export async function runEnhanceVideo(
   payload: EnhanceVideoPayload,
@@ -55,6 +62,8 @@ export async function runEnhanceVideo(
         model: payload.model,
         prompt: payload.prompt,
         inputVideoUrl: payload.inputVideoUrl,
+        durationSeconds: payload.durationSeconds ?? 6,
+        aspectRatio: payload.aspectRatio ?? "16:9",
       } as Prisma.InputJsonValue,
     },
   });
@@ -81,35 +90,81 @@ export async function runEnhanceVideo(
     // 3. Upload frame to CDN.
     const { url: frameUrl } = await uploadBufferToTransloadit(frameBuf, "frame.jpg", "image/jpeg");
 
-    // 4. Use Veo image-to-video — reuse the generateVideo worker's full logic.
+    // 4. Fetch frame bytes for Veo's image parameter.
+    const frameRes = await fetch(frameUrl);
+    if (!frameRes.ok) throw new Error(`re-fetch frame: ${frameRes.status}`);
+    const frameArrBuf = await frameRes.arrayBuffer();
+    const frameB64 = Buffer.from(frameArrBuf).toString("base64");
+
     const enhancedPrompt = payload.prompt
       ? `Enhance and improve the quality of this video. ${payload.prompt}`
       : "Enhance and improve the quality of this video, making it sharper and more vivid.";
 
-    return await runGenerateVideo({
-      workflowRunId: payload.workflowRunId,
-      nodeRunId: payload.nodeRunId,
-      nodeId: payload.nodeId,
+    // 5. Call Veo image-to-video and poll until complete.
+    const ai = googleAI();
+    let operation = await ai.models.generateVideos({
       model: payload.model,
       prompt: enhancedPrompt,
-      inputImageUrl: frameUrl,
-      durationSeconds: 6,
-      aspectRatio: "16:9",
+      image: { imageBytes: frameB64, mimeType: "image/jpeg" },
+      config: {
+        durationSeconds: payload.durationSeconds ?? 6,
+        aspectRatio: payload.aspectRatio ?? "16:9",
+        numberOfVideos: 1,
+        ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
+        ...(payload.seed != null ? { seed: payload.seed } : {}),
+        ...(payload.generateAudio != null ? { generateAudio: payload.generateAudio } : {}),
+        ...(payload.enhancePrompt != null ? { enhancePrompt: payload.enhancePrompt } : {}),
+      },
     });
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60;
+    while (!operation.done && attempts < MAX_ATTEMPTS) {
+      await wait.for({ seconds: 10 });
+      operation = await ai.operations.getVideosOperation({ operation });
+      attempts++;
+    }
+
+    if (!operation.done) {
+      throw new Error("Veo enhance timed out after 10 minutes");
+    }
+
+    const generated = operation.response?.generatedVideos?.[0];
+    if (!generated?.video) {
+      throw new Error("Veo returned no video in enhance response");
+    }
+
+    let buf: Buffer;
+    if (generated.video.videoBytes) {
+      buf = Buffer.from(generated.video.videoBytes as string, "base64");
+    } else if (generated.video.uri) {
+      const res = await fetch(generated.video.uri);
+      if (!res.ok) throw new Error(`fetch Veo enhance URI: ${res.status}`);
+      buf = Buffer.from(await res.arrayBuffer());
+    } else {
+      throw new Error("Veo enhance video has neither videoBytes nor uri");
+    }
+
+    const { url } = await uploadBufferToTransloadit(buf, "enhanced.mp4", "video/mp4");
+
+    const finishedAt = new Date();
+    await prisma.nodeRun.update({
+      where: { id: payload.nodeRunId },
+      data: {
+        status: "SUCCESS",
+        finishedAt,
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+        output: { url },
+      },
+    });
+    return { url };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    // Only write FAILED if runGenerateVideo hasn't already done it.
-    const current = await prisma.nodeRun.findUnique({
+    await prisma.nodeRun.update({
       where: { id: payload.nodeRunId },
-      select: { status: true },
+      data: { status: "FAILED", finishedAt: new Date(), error: message },
     });
-    if (current && current.status !== "SUCCESS" && current.status !== "FAILED") {
-      await prisma.nodeRun.update({
-        where: { id: payload.nodeRunId },
-        data: { status: "FAILED", finishedAt: new Date(), error: message },
-      });
-    }
-    throw err;
+    rethrowClassified(err);
   } finally {
     await rm(workdir, { recursive: true, force: true }).catch(() => {});
   }

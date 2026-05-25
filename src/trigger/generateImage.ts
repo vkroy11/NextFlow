@@ -12,6 +12,9 @@ export type GenerateImagePayload = {
   prompt: string;
   inputImageUrl?: string | null;
   aspectRatio?: string;
+  systemPrompt?: string;
+  seed?: number;
+  temperature?: number;
 };
 
 export type GenerateImageOutput = { url: string };
@@ -70,6 +73,9 @@ export async function runGenerateImage(
       contents: [{ parts }],
       config: {
         responseModalities: ["TEXT", "IMAGE"],
+        ...(payload.systemPrompt ? { systemInstruction: payload.systemPrompt } : {}),
+        ...(payload.seed != null ? { seed: payload.seed } : {}),
+        ...(payload.temperature != null ? { temperature: payload.temperature } : {}),
       },
     });
 

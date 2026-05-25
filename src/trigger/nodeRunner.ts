@@ -6,6 +6,7 @@ import { runGemini, type GeminiPayload } from "./gemini";
 import { runGenerateImage, type GenerateImagePayload } from "./generateImage";
 import { runGenerateVideo, type GenerateVideoPayload } from "./generateVideo";
 import { runEnhanceVideo, type EnhanceVideoPayload } from "./enhanceVideo";
+import { runExtendVideo, type ExtendVideoPayload } from "./extendVideo";
 import {
   runInput,
   runRequestInputs,
@@ -430,8 +431,18 @@ async function executeWorker(args: {
         prompt?: string;
         aspectRatio?: string;
         inputUrl?: string | null;
+        systemPrompt?: string;
+        seed?: number;
+        temperature?: number;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
+      const systemPromptOverride = resolveTextInput(
+        parentIds,
+        parentByEdge,
+        edges,
+        nodeId,
+        "system_prompt",
+      );
       const inputImageUrl =
         resolveImageInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputUrl ?? null;
       const prompt = promptOverride ?? data.prompt ?? "";
@@ -454,6 +465,9 @@ async function executeWorker(args: {
         prompt,
         inputImageUrl,
         aspectRatio: data.aspectRatio,
+        systemPrompt: (systemPromptOverride ?? data.systemPrompt) || undefined,
+        seed: data.seed,
+        temperature: data.temperature,
       };
       return await runGenerateImage(genImagePayload);
     }
@@ -465,6 +479,13 @@ async function executeWorker(args: {
         durationSeconds?: number;
         aspectRatio?: string;
         inputUrl?: string | null;
+        negativePrompt?: string;
+        seed?: number;
+        fps?: number;
+        resolution?: string;
+        generateAudio?: boolean;
+        enhancePrompt?: boolean;
+        personGeneration?: string;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
       const inputImageUrl =
@@ -490,6 +511,13 @@ async function executeWorker(args: {
         inputImageUrl,
         durationSeconds: data.durationSeconds ?? 6,
         aspectRatio: data.aspectRatio ?? "16:9",
+        negativePrompt: data.negativePrompt,
+        seed: data.seed,
+        fps: data.fps,
+        resolution: data.resolution,
+        generateAudio: data.generateAudio,
+        enhancePrompt: data.enhancePrompt,
+        personGeneration: data.personGeneration,
       };
       return await runGenerateVideo(genVideoPayload);
     }
@@ -499,6 +527,12 @@ async function executeWorker(args: {
         model?: string;
         prompt?: string;
         inputVideoUrl?: string | null;
+        durationSeconds?: number;
+        aspectRatio?: string;
+        negativePrompt?: string;
+        seed?: number;
+        generateAudio?: boolean;
+        enhancePrompt?: boolean;
       };
       const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
       const inputVideoUrl =
@@ -521,8 +555,63 @@ async function executeWorker(args: {
         model: data.model ?? "veo-3.1-generate-preview",
         prompt: promptOverride ?? data.prompt ?? "",
         inputVideoUrl,
+        durationSeconds: data.durationSeconds,
+        aspectRatio: data.aspectRatio,
+        negativePrompt: data.negativePrompt,
+        seed: data.seed,
+        generateAudio: data.generateAudio,
+        enhancePrompt: data.enhancePrompt,
       };
       return await runEnhanceVideo(enhancePayload);
+    }
+
+    case "extendVideo": {
+      const data = (node.data ?? {}) as {
+        model?: string;
+        prompt?: string;
+        inputVideoUrl?: string | null;
+        durationSeconds?: number;
+        aspectRatio?: string;
+        negativePrompt?: string;
+        seed?: number;
+        fps?: number;
+        resolution?: string;
+        generateAudio?: boolean;
+        enhancePrompt?: boolean;
+        personGeneration?: string;
+      };
+      const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
+      const inputVideoUrl =
+        resolveVideoInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputVideoUrl ?? null;
+      if (!inputVideoUrl) {
+        await prisma.nodeRun.update({
+          where: { id: nodeRunId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: `extendVideo ${nodeId}: no input video — connect an upstream video output or upload locally`,
+          },
+        });
+        throw new Error(`extendVideo ${nodeId}: no input video`);
+      }
+      const extendPayload: ExtendVideoPayload = {
+        workflowRunId,
+        nodeRunId,
+        nodeId,
+        model: data.model ?? "veo-3.1-generate-preview",
+        prompt: promptOverride ?? data.prompt ?? "",
+        inputVideoUrl,
+        durationSeconds: data.durationSeconds ?? 6,
+        aspectRatio: data.aspectRatio ?? "16:9",
+        negativePrompt: data.negativePrompt,
+        seed: data.seed,
+        fps: data.fps,
+        resolution: data.resolution,
+        generateAudio: data.generateAudio,
+        enhancePrompt: data.enhancePrompt,
+        personGeneration: data.personGeneration,
+      };
+      return await runExtendVideo(extendPayload);
     }
 
     case "stickyNote": {
@@ -657,6 +746,7 @@ function resolveTextInput(
     if (out.kind === "generateImage") return out.output.url;
     if (out.kind === "generateVideo") return out.output.url;
     if (out.kind === "enhanceVideo") return out.output.url;
+    if (out.kind === "extendVideo") return out.output.url;
     if (out.kind === "requestInputs") {
       const sourceHandle = (edge.sourceHandle ?? "").toLowerCase();
       const v = out.output.fields[sourceHandle];
@@ -685,6 +775,7 @@ function resolveVideoInput(
     if (!out) continue;
     if (out.kind === "generateVideo") return out.output.url;
     if (out.kind === "enhanceVideo") return out.output.url;
+    if (out.kind === "extendVideo") return out.output.url;
     if (out.kind === "requestInputs") {
       const handle = (edge.sourceHandle ?? "").toLowerCase();
       const v = out.output.fields[handle];

@@ -136,6 +136,25 @@ const CATEGORIES: CategoryDef[] = [
           { id: "vid-topaz", label: "Topaz Video AI", icon: MessageSquare, enabled: false },
         ],
       },
+      {
+        id: "extend-video",
+        label: "Extend Video",
+        items: [
+          {
+            id: "vid-veo-extend",
+            label: "Veo Extend",
+            icon: Sparkles,
+            enabled: true,
+            nodeType: "extendVideo",
+            defaultData: {
+              model: "veo-3.1-generate-preview",
+              prompt: "",
+              durationSeconds: 6,
+              aspectRatio: "16:9",
+            },
+          },
+        ],
+      },
     ],
   },
   {

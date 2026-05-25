@@ -14,6 +14,7 @@ export const NodeTypeEnum = z.enum([
   "generateImage",
   "generateVideo",
   "enhanceVideo",
+  "extendVideo",
 ]);
 export type NodeType = z.infer<typeof NodeTypeEnum>;
 

@@ -5,13 +5,13 @@ import { prisma } from "@/lib/prisma";
 import { rethrowClassified } from "@/lib/triggerErrors";
 import type { Prisma } from "@prisma/client";
 
-export type GenerateVideoPayload = {
+export type ExtendVideoPayload = {
   workflowRunId: string;
   nodeRunId: string;
   nodeId: string;
   model: string;
   prompt: string;
-  inputImageUrl?: string | null;
+  inputVideoUrl: string;
   durationSeconds: number;
   aspectRatio: string;
   negativePrompt?: string;
@@ -23,19 +23,20 @@ export type GenerateVideoPayload = {
   personGeneration?: string;
 };
 
-export type GenerateVideoOutput = { url: string };
+export type ExtendVideoOutput = { url: string };
 
 /**
- * Worker for the generateVideo node. Uses Veo 3.1 via the @google/genai SDK.
- * Supports text-to-video and image-to-video (when inputImageUrl is set).
+ * Worker for the extendVideo node. Uses Veo's `video` parameter to continue
+ * (extend) an existing generated video. The `video` and `image` params are
+ * mutually exclusive in Veo's API — this worker uses `video` while
+ * generateVideo uses `image` for image-to-video mode.
  *
- * The Veo API is async: generateVideos() returns an operation that must be
- * polled until done. We use wait.for() between polls so Trigger.dev can
- * checkpoint the task — these pauses don't count against maxDuration.
+ * The input video is fetched, base64-encoded, and passed as `videoBytes`.
+ * Same async polling pattern as generateVideo.ts.
  */
-export async function runGenerateVideo(
-  payload: GenerateVideoPayload,
-): Promise<GenerateVideoOutput> {
+export async function runExtendVideo(
+  payload: ExtendVideoPayload,
+): Promise<ExtendVideoOutput> {
   const existing = await prisma.nodeRun.findUnique({
     where: { id: payload.nodeRunId },
     select: { status: true, output: true },
@@ -49,10 +50,10 @@ export async function runGenerateVideo(
   const inputRecord: Record<string, unknown> = {
     model: payload.model,
     prompt: payload.prompt,
+    inputVideoUrl: payload.inputVideoUrl,
     durationSeconds: payload.durationSeconds,
     aspectRatio: payload.aspectRatio,
   };
-  if (payload.inputImageUrl) inputRecord.inputImageUrl = payload.inputImageUrl;
 
   await prisma.nodeRun.update({
     where: { id: payload.nodeRunId },
@@ -60,22 +61,22 @@ export async function runGenerateVideo(
   });
 
   try {
-    const ai = googleAI();
-
-    // Build the optional start-image for image-to-video mode.
-    let imageParam: { imageBytes: string; mimeType: string } | undefined;
-    if (payload.inputImageUrl) {
-      const res = await fetch(payload.inputImageUrl);
-      if (!res.ok) throw new Error(`fetch start image: ${res.status} ${res.statusText}`);
-      const arrayBuf = await res.arrayBuffer();
-      const b64 = Buffer.from(arrayBuf).toString("base64");
-      const contentType = res.headers.get("content-type") ?? "image/jpeg";
-      imageParam = { imageBytes: b64, mimeType: contentType.split(";")[0] };
+    // Fetch video bytes for Veo's video continuation parameter.
+    const videoRes = await fetch(payload.inputVideoUrl);
+    if (!videoRes.ok) {
+      throw new Error(`fetch input video: ${videoRes.status} ${videoRes.statusText}`);
     }
+    const videoArrBuf = await videoRes.arrayBuffer();
+    const videoB64 = Buffer.from(videoArrBuf).toString("base64");
+    const contentType = videoRes.headers.get("content-type") ?? "video/mp4";
+    const mimeType = contentType.split(";")[0];
+
+    const ai = googleAI();
 
     let operation = await ai.models.generateVideos({
       model: payload.model,
       prompt: payload.prompt,
+      video: { videoBytes: videoB64, mimeType },
       config: {
         durationSeconds: payload.durationSeconds,
         aspectRatio: payload.aspectRatio,
@@ -88,14 +89,10 @@ export async function runGenerateVideo(
         ...(payload.enhancePrompt != null ? { enhancePrompt: payload.enhancePrompt } : {}),
         ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
       },
-      ...(imageParam ? { image: imageParam } : {}),
     });
 
-    // Poll until the operation completes. wait.for() checkpoints the task so
-    // these waits don't count against the task's maxDuration compute budget.
-    // Polling uses ai.operations.getVideosOperation() per the @google/genai SDK.
     let attempts = 0;
-    const MAX_ATTEMPTS = 60; // 60 × 10 s = 10 min ceiling
+    const MAX_ATTEMPTS = 60;
     while (!operation.done && attempts < MAX_ATTEMPTS) {
       await wait.for({ seconds: 10 });
       operation = await ai.operations.getVideosOperation({ operation });
@@ -103,27 +100,26 @@ export async function runGenerateVideo(
     }
 
     if (!operation.done) {
-      throw new Error("Veo video generation timed out after 10 minutes");
+      throw new Error("Veo video extension timed out after 10 minutes");
     }
 
     const generated = operation.response?.generatedVideos?.[0];
     if (!generated?.video) {
-      throw new Error("Veo returned no video in operation response");
+      throw new Error("Veo returned no video in extension response");
     }
 
-    // Prefer base64 bytes; fall back to URI download.
     let buf: Buffer;
     if (generated.video.videoBytes) {
       buf = Buffer.from(generated.video.videoBytes as string, "base64");
     } else if (generated.video.uri) {
       const res = await fetch(generated.video.uri);
-      if (!res.ok) throw new Error(`fetch Veo video URI: ${res.status}`);
+      if (!res.ok) throw new Error(`fetch Veo extend URI: ${res.status}`);
       buf = Buffer.from(await res.arrayBuffer());
     } else {
-      throw new Error("Veo video has neither videoBytes nor uri");
+      throw new Error("Veo extended video has neither videoBytes nor uri");
     }
 
-    const { url } = await uploadBufferToTransloadit(buf, "generated.mp4", "video/mp4");
+    const { url } = await uploadBufferToTransloadit(buf, "extended.mp4", "video/mp4");
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
-import { Image as ImageIcon, Loader2, Sparkles, Upload, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Image as ImageIcon, Loader2, Settings as SettingsIcon, Sparkles, Upload, X } from "lucide-react";
 import { NodeShell } from "./NodeShell";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { colorForHandle } from "@/lib/handleColors";
@@ -16,13 +16,48 @@ type FileVal = { url: string; name?: string };
 type Data = {
   model?: string;
   prompt?: string;
+  systemPrompt?: string;
   aspectRatio?: string;
   inputUrl?: string | null;
   outputUrl?: string | null;
   inputFile?: FileVal | null;
+  seed?: number;
+  temperature?: number;
 };
 
 const ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
+
+function Collapsible({
+  label,
+  open,
+  onToggle,
+  children,
+  icon,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  icon?: ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="nodrag flex w-full items-center gap-1.5 text-xs font-medium text-gray-700 hover:text-gray-900"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        )}
+        {icon}
+        {label}
+      </button>
+      {open && <div className="mt-2 space-y-3">{children}</div>}
+    </div>
+  );
+}
 
 export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
@@ -30,16 +65,22 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
   const edges = useWorkflowStore((s) => s.edges);
   const { triggerRun } = useWorkflowRun();
   const pushToast = useWorkflowStore((s) => s.pushToast);
+  const runStatus = useWorkflowStore((s) => s.runStatus[id]);
   const [uploading, setUploading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const promptConnected = isHandleConnected(edges, id, "prompt");
+  const systemConnected = isHandleConnected(edges, id, "system_prompt");
   const inputConnected = isHandleConnected(edges, id, "input");
 
   const upstreamPrompt = resolveConnectedValue(nodes, edges, id, "prompt");
+  const upstreamSystem = resolveConnectedValue(nodes, edges, id, "system_prompt");
   const upstreamInput = resolveConnectedValue(nodes, edges, id, "input");
 
   const promptValue =
     promptConnected && typeof upstreamPrompt === "string" ? upstreamPrompt : data?.prompt ?? "";
+  const systemValue =
+    systemConnected && typeof upstreamSystem === "string" ? upstreamSystem : data?.systemPrompt ?? "";
 
   function pickUrl(v: unknown): string | null {
     if (typeof v === "string") return v;
@@ -52,6 +93,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
     : data?.inputFile?.url ?? data?.inputUrl ?? null;
 
   const isEditMode = !!inputImageUrl;
+  const isRunning = runStatus === "running";
 
   async function uploadInputImage(file: File) {
     setUploading(true);
@@ -75,7 +117,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
       headerLeft={<Sparkles className="h-3.5 w-3.5 shrink-0 text-indigo-500" />}
     >
       <div className="space-y-4">
-        {/* Prompt input */}
+        {/* Prompt */}
         <div className="relative">
           <Handle
             id="prompt"
@@ -110,6 +152,44 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
             className={cn(
               "nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-2 text-[13px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white",
               promptConnected && "cursor-not-allowed bg-gray-50 text-gray-400",
+            )}
+          />
+        </div>
+
+        {/* System prompt */}
+        <div className="relative">
+          <Handle
+            id="system_prompt"
+            type="target"
+            position={Position.Left}
+            className="!h-3.5 !w-3.5 !rounded-full !border-2"
+            style={{
+              left: -22,
+              top: 12,
+              transform: "translateY(-50%)",
+              background: colorForHandle("prompt"),
+              borderColor: colorForHandle("prompt"),
+              boxShadow: `${colorForHandle("prompt")}50 0 0 8px`,
+            }}
+          />
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-900">System Prompt</span>
+            <span className="text-[10px] text-gray-400">optional</span>
+            {systemConnected && (
+              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-amber-700">
+                Linked
+              </span>
+            )}
+          </div>
+          <textarea
+            value={systemValue}
+            disabled={systemConnected}
+            onChange={(e) => updateNodeData(id, { systemPrompt: e.target.value })}
+            placeholder="You are a creative art director..."
+            rows={2}
+            className={cn(
+              "nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-2 text-[13px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white",
+              systemConnected && "cursor-not-allowed bg-gray-50 text-gray-400",
             )}
           />
         </div>
@@ -204,6 +284,45 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
           </div>
         </div>
 
+        {/* Settings */}
+        <Collapsible
+          label="Settings"
+          icon={<SettingsIcon className="h-3.5 w-3.5" />}
+          open={showSettings}
+          onToggle={() => setShowSettings((v) => !v)}
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-600">Seed</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={data?.seed ?? ""}
+              onChange={(e) =>
+                updateNodeData(id, {
+                  seed: e.target.value === "" ? undefined : Number(e.target.value),
+                })
+              }
+              placeholder="random"
+              className="nodrag w-full rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-600">
+              Temperature ({data?.temperature ?? 1.0})
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={data?.temperature ?? 1.0}
+              onChange={(e) => updateNodeData(id, { temperature: Number(e.target.value) })}
+              className="nodrag h-1 cursor-pointer appearance-none rounded-full bg-gray-200 accent-workflow-accent-500"
+            />
+          </label>
+        </Collapsible>
+
         {/* Output image */}
         <div className="relative">
           <span className="mb-1.5 block text-xs font-medium text-gray-900">Output Image</span>
@@ -221,7 +340,12 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<Data>) {
               boxShadow: `${colorForHandle("image")}50 0 0 8px`,
             }}
           />
-          {data?.outputUrl ? (
+          {isRunning ? (
+            <div className="flex h-16 items-center justify-center gap-2 rounded-lg border border-gray-100 bg-[#FAFAFA] text-[12px] text-indigo-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Generating image…
+            </div>
+          ) : data?.outputUrl ? (
             <div className="overflow-hidden rounded-lg border border-gray-200">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img

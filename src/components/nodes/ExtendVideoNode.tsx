@@ -23,12 +23,20 @@ type Data = {
   aspectRatio?: string;
   negativePrompt?: string;
   seed?: number;
+  fps?: number;
+  resolution?: string;
   generateAudio?: boolean;
   enhancePrompt?: boolean;
+  personGeneration?: string;
 };
 
 const DURATIONS = [4, 6, 8] as const;
 const ASPECT_RATIOS = ["16:9", "9:16"] as const;
+const PERSON_GEN_OPTIONS = [
+  { value: "allow_adult", label: "Allow Adults" },
+  { value: "allow_all", label: "Allow All" },
+  { value: "dont_allow", label: "Don't Allow" },
+] as const;
 
 function Collapsible({
   label,
@@ -62,7 +70,7 @@ function Collapsible({
   );
 }
 
-export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
+export function ExtendVideoNode({ id, data, selected }: NodeProps<Data>) {
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
   const nodes = useWorkflowStore((s) => s.nodes);
   const edges = useWorkflowStore((s) => s.edges);
@@ -111,11 +119,11 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
   return (
     <NodeShell
       id={id}
-      title="Enhance Video"
-      tooltip="Enhance a video using Veo 3.1. Extracts the first frame and regenerates a high-quality version. Requires a video input."
+      title="Extend Video"
+      tooltip="Extend an existing video using Veo 3.1's continuation feature. Connect the output of a Generate Video or Extend Video node."
       selected={selected}
       onRun={() => triggerRun("SINGLE", [id])}
-      headerLeft={<VideoIcon className="h-3.5 w-3.5 shrink-0 text-purple-500" />}
+      headerLeft={<VideoIcon className="h-3.5 w-3.5 shrink-0 text-violet-500" />}
     >
       <div className="space-y-4">
         {/* Video input (required) */}
@@ -139,7 +147,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
               Input Video <span className="text-red-500">*</span>
             </span>
             {videoConnected && (
-              <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-indigo-700">
+              <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-violet-700">
                 Linked
               </span>
             )}
@@ -198,7 +206,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
           )}
         </div>
 
-        {/* Optional enhancement prompt */}
+        {/* Optional continuation prompt */}
         <div className="relative">
           <Handle
             id="prompt"
@@ -215,14 +223,14 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
             }}
           />
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-900">Enhancement Prompt</span>
+            <span className="text-xs font-medium text-gray-900">Continuation Prompt</span>
             <span className="text-[10px] text-gray-400">optional</span>
           </div>
           <textarea
             value={promptValue}
             disabled={promptConnected}
             onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
-            placeholder="e.g. sharp cinematic quality, vibrant colors..."
+            placeholder="Describe how the video should continue..."
             rows={2}
             className={cn(
               "nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-2 text-[13px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white",
@@ -243,7 +251,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
                   className={cn(
                     "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
                     (data?.durationSeconds ?? 6) === d
-                      ? "border-purple-400 bg-purple-50 text-purple-700"
+                      ? "border-violet-400 bg-violet-50 text-violet-700"
                       : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
                   )}
                 >
@@ -262,7 +270,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
                   className={cn(
                     "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
                     (data?.aspectRatio ?? "16:9") === ar
-                      ? "border-purple-400 bg-purple-50 text-purple-700"
+                      ? "border-violet-400 bg-violet-50 text-violet-700"
                       : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
                   )}
                 >
@@ -285,7 +293,7 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
             <textarea
               value={data?.negativePrompt ?? ""}
               onChange={(e) => updateNodeData(id, { negativePrompt: e.target.value || undefined })}
-              placeholder="What to avoid..."
+              placeholder="What to avoid in the extension..."
               rows={2}
               className="nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
             />
@@ -306,13 +314,53 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
               className="nodrag w-full rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
             />
           </label>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <span className="mb-1 block text-[11px] font-medium text-gray-600">FPS</span>
+              <div className="flex gap-1">
+                {([24, 30] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => updateNodeData(id, { fps: data?.fps === f ? undefined : f })}
+                    className={cn(
+                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                      data?.fps === f
+                        ? "border-violet-400 bg-violet-50 text-violet-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex-1">
+              <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
+              <div className="flex gap-1">
+                {(["720p", "1080p"] as const).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => updateNodeData(id, { resolution: data?.resolution === r ? undefined : r })}
+                    className={cn(
+                      "nodrag rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                      data?.resolution === r
+                        ? "border-violet-400 bg-violet-50 text-violet-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                    )}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
           <div className="flex flex-col gap-2">
             <label className="nodrag flex cursor-pointer items-center gap-2">
               <input
                 type="checkbox"
                 checked={data?.generateAudio ?? false}
                 onChange={(e) => updateNodeData(id, { generateAudio: e.target.checked })}
-                className="rounded accent-purple-500"
+                className="rounded accent-violet-500"
               />
               <span className="text-[11px] font-medium text-gray-600">Generate Audio</span>
             </label>
@@ -321,16 +369,33 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
                 type="checkbox"
                 checked={data?.enhancePrompt ?? false}
                 onChange={(e) => updateNodeData(id, { enhancePrompt: e.target.checked })}
-                className="rounded accent-purple-500"
+                className="rounded accent-violet-500"
               />
               <span className="text-[11px] font-medium text-gray-600">Enhance Prompt</span>
             </label>
           </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-gray-600">Person Generation</span>
+            <select
+              value={data?.personGeneration ?? ""}
+              onChange={(e) =>
+                updateNodeData(id, { personGeneration: e.target.value || undefined })
+              }
+              className="nodrag rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
+            >
+              <option value="">Default</option>
+              {PERSON_GEN_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </Collapsible>
 
         {/* Output */}
         <div className="relative">
-          <span className="mb-1.5 block text-xs font-medium text-gray-900">Enhanced Video</span>
+          <span className="mb-1.5 block text-xs font-medium text-gray-900">Extended Video</span>
           <Handle
             id="video-output"
             type="source"
@@ -346,19 +411,19 @@ export function EnhanceVideoNode({ id, data, selected }: NodeProps<Data>) {
             }}
           />
           {isRunning ? (
-            <div className="flex h-16 items-center justify-center gap-2 rounded-lg border border-gray-100 bg-[#FAFAFA] text-[12px] text-purple-500">
+            <div className="flex h-16 items-center justify-center gap-2 rounded-lg border border-gray-100 bg-[#FAFAFA] text-[12px] text-violet-500">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Enhancing video…
+              Extending video…
             </div>
           ) : data?.outputUrl ? (
             <a
               href={data.outputUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-[12px] font-medium text-purple-700 hover:bg-purple-100"
+              className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12px] font-medium text-violet-700 hover:bg-violet-100"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              Open enhanced video
+              Open extended video
             </a>
           ) : (
             <div className="flex h-16 items-center justify-center rounded-lg border border-gray-100 bg-[#FAFAFA] text-[12px] text-gray-400">

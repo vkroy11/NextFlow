@@ -42,6 +42,7 @@ import { StickyNoteNode } from "@/components/nodes/StickyNote";
 import { GenerateImageNode } from "@/components/nodes/GenerateImageNode";
 import { GenerateVideoNode } from "@/components/nodes/GenerateVideoNode";
 import { EnhanceVideoNode } from "@/components/nodes/EnhanceVideoNode";
+import { ExtendVideoNode } from "@/components/nodes/ExtendVideoNode";
 import { RemovableEdge } from "./RemovableEdge";
 import { WorkflowRunProvider, type RunScope } from "./RunContext";
 import { NodePicker } from "./NodePicker";
@@ -62,6 +63,7 @@ const nodeTypes = {
   generateImage: GenerateImageNode,
   generateVideo: GenerateVideoNode,
   enhanceVideo: EnhanceVideoNode,
+  extendVideo: ExtendVideoNode,
 };
 
 // Override the built-in "default" edge with our removable variant so legacy

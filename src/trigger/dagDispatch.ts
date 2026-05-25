@@ -255,7 +255,8 @@ export type NodeOutput =
   | { kind: "response"; output: { result: string | null; perEdge?: Record<string, string> } }
   | { kind: "generateImage"; output: { url: string } }
   | { kind: "generateVideo"; output: { url: string } }
-  | { kind: "enhanceVideo"; output: { url: string } };
+  | { kind: "enhanceVideo"; output: { url: string } }
+  | { kind: "extendVideo"; output: { url: string } };
 
 export function nodeRunRowToOutput(row: {
   nodeType: string;
@@ -294,6 +295,10 @@ export function nodeRunRowToOutput(row: {
   }
   if (row.nodeType === "enhanceVideo") {
     if (typeof out.url === "string") return { kind: "enhanceVideo", output: { url: out.url } };
+    return null;
+  }
+  if (row.nodeType === "extendVideo") {
+    if (typeof out.url === "string") return { kind: "extendVideo", output: { url: out.url } };
     return null;
   }
   return null;
