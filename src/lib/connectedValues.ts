@@ -42,6 +42,13 @@ export function resolveConnectedValue(
   if (sourceNode.type === "gemini") {
     return (sourceNode.data as { response?: string | null } | undefined)?.response ?? undefined;
   }
+  if (
+    sourceNode.type === "generateImage" ||
+    sourceNode.type === "generateVideo" ||
+    sourceNode.type === "enhanceVideo"
+  ) {
+    return (sourceNode.data as { outputUrl?: string | null } | undefined)?.outputUrl ?? undefined;
+  }
   return undefined;
 }
 
@@ -79,7 +86,7 @@ export function resolveAllConnectedImageUrls(
       } else if (typeof f.value === "string" && f.value) {
         urls.push(f.value);
       }
-    } else if (sourceNode.type === "cropImage") {
+    } else if (sourceNode.type === "cropImage" || sourceNode.type === "generateImage") {
       const u = (sourceNode.data as { outputUrl?: string | null } | undefined)?.outputUrl;
       if (u) urls.push(u);
     } else if (sourceNode.type === "input") {

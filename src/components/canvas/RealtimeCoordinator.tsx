@@ -174,6 +174,12 @@ function ActiveCoordinator({
       } else if (kind === "cropImage" && typeof out.url === "string") {
         updateNodeData(nodeId, { outputUrl: out.url });
         writtenOutputsRef.current.add(r.id);
+      } else if (
+        (kind === "generateImage" || kind === "generateVideo" || kind === "enhanceVideo") &&
+        typeof out.url === "string"
+      ) {
+        updateNodeData(nodeId, { outputUrl: out.url });
+        writtenOutputsRef.current.add(r.id);
       } else if (kind === "response") {
         updateNodeData(nodeId, {
           result: (out.result as string | null | undefined) ?? null,

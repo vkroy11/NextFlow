@@ -252,7 +252,10 @@ export type NodeOutput =
   | { kind: "requestInputs"; output: { fields: Record<string, unknown> } }
   | { kind: "cropImage"; output: { url: string } }
   | { kind: "gemini"; output: { text: string } }
-  | { kind: "response"; output: { result: string | null; perEdge?: Record<string, string> } };
+  | { kind: "response"; output: { result: string | null; perEdge?: Record<string, string> } }
+  | { kind: "generateImage"; output: { url: string } }
+  | { kind: "generateVideo"; output: { url: string } }
+  | { kind: "enhanceVideo"; output: { url: string } };
 
 export function nodeRunRowToOutput(row: {
   nodeType: string;
@@ -280,6 +283,18 @@ export function nodeRunRowToOutput(row: {
         perEdge: (out.perEdge ?? undefined) as Record<string, string> | undefined,
       },
     };
+  }
+  if (row.nodeType === "generateImage") {
+    if (typeof out.url === "string") return { kind: "generateImage", output: { url: out.url } };
+    return null;
+  }
+  if (row.nodeType === "generateVideo") {
+    if (typeof out.url === "string") return { kind: "generateVideo", output: { url: out.url } };
+    return null;
+  }
+  if (row.nodeType === "enhanceVideo") {
+    if (typeof out.url === "string") return { kind: "enhanceVideo", output: { url: out.url } };
+    return null;
   }
   return null;
 }

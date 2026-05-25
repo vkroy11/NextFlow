@@ -39,6 +39,9 @@ import { Gemini31ProNode } from "@/components/nodes/Gemini31ProNode";
 import { ResponseNode } from "@/components/nodes/ResponseNode";
 import { InputNode } from "@/components/nodes/InputNode";
 import { StickyNoteNode } from "@/components/nodes/StickyNote";
+import { GenerateImageNode } from "@/components/nodes/GenerateImageNode";
+import { GenerateVideoNode } from "@/components/nodes/GenerateVideoNode";
+import { EnhanceVideoNode } from "@/components/nodes/EnhanceVideoNode";
 import { RemovableEdge } from "./RemovableEdge";
 import { WorkflowRunProvider, type RunScope } from "./RunContext";
 import { NodePicker } from "./NodePicker";
@@ -56,6 +59,9 @@ const nodeTypes = {
   response: ResponseNode,
   input: InputNode,
   stickyNote: StickyNoteNode,
+  generateImage: GenerateImageNode,
+  generateVideo: GenerateVideoNode,
+  enhanceVideo: EnhanceVideoNode,
 };
 
 // Override the built-in "default" edge with our removable variant so legacy

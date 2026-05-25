@@ -56,7 +56,18 @@ const CATEGORIES: CategoryDef[] = [
         id: "gen-image",
         label: "Generate Image",
         items: [
-          { id: "img-imagen-3", label: "Imagen 3", icon: MessageSquare, enabled: false },
+          {
+            id: "img-gemini-gen",
+            label: "Gemini Image Gen",
+            icon: Sparkles,
+            enabled: true,
+            nodeType: "generateImage",
+            defaultData: {
+              model: "gemini-2.0-flash-preview-image-generation",
+              prompt: "",
+              aspectRatio: "1:1",
+            },
+          },
           { id: "img-dalle-3", label: "DALL-E 3", icon: MessageSquare, enabled: false },
           { id: "img-flux-pro", label: "Flux Pro", icon: MessageSquare, enabled: false },
           { id: "img-stable-3", label: "Stable Diffusion 3", icon: MessageSquare, enabled: false },
@@ -66,7 +77,18 @@ const CATEGORIES: CategoryDef[] = [
         id: "edit-image",
         label: "Edit Image",
         items: [
-          { id: "img-magic-edit", label: "Magic Edit", icon: MessageSquare, enabled: false },
+          {
+            id: "img-gemini-edit",
+            label: "Gemini Image Edit",
+            icon: Sparkles,
+            enabled: true,
+            nodeType: "generateImage",
+            defaultData: {
+              model: "gemini-2.0-flash-preview-image-generation",
+              prompt: "",
+              aspectRatio: "1:1",
+            },
+          },
           { id: "img-inpaint", label: "Inpaint", icon: MessageSquare, enabled: false },
         ],
       },
@@ -81,6 +103,19 @@ const CATEGORIES: CategoryDef[] = [
         id: "gen-video",
         label: "Generate Video",
         items: [
+          {
+            id: "vid-veo-3-1",
+            label: "Veo 3.1",
+            icon: Sparkles,
+            enabled: true,
+            nodeType: "generateVideo",
+            defaultData: {
+              model: "veo-3.1-generate-preview",
+              prompt: "",
+              durationSeconds: 6,
+              aspectRatio: "16:9",
+            },
+          },
           { id: "vid-sora-2", label: "Sora 2", icon: MessageSquare, enabled: false },
           { id: "vid-runway", label: "Runway Gen-3", icon: MessageSquare, enabled: false },
           { id: "vid-kling", label: "Kling 1.6", icon: MessageSquare, enabled: false },
@@ -89,7 +124,17 @@ const CATEGORIES: CategoryDef[] = [
       {
         id: "enhance-video",
         label: "Enhance Video",
-        items: [{ id: "vid-topaz", label: "Topaz Video AI", icon: MessageSquare, enabled: false }],
+        items: [
+          {
+            id: "vid-veo-enhance",
+            label: "Veo Enhance",
+            icon: Sparkles,
+            enabled: true,
+            nodeType: "enhanceVideo",
+            defaultData: { model: "veo-3.1-generate-preview", prompt: "" },
+          },
+          { id: "vid-topaz", label: "Topaz Video AI", icon: MessageSquare, enabled: false },
+        ],
       },
     ],
   },

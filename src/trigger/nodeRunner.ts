@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import type { CanvasEdge, CanvasNode } from "@/lib/types";
 import { runCropImage, type CropPayload } from "./cropImage";
 import { runGemini, type GeminiPayload } from "./gemini";
+import { runGenerateImage, type GenerateImagePayload } from "./generateImage";
+import { runGenerateVideo, type GenerateVideoPayload } from "./generateVideo";
+import { runEnhanceVideo, type EnhanceVideoPayload } from "./enhanceVideo";
 import {
   runInput,
   runRequestInputs,
@@ -421,6 +424,107 @@ async function executeWorker(args: {
       return await runResponse({ workflowRunId, nodeRunId, nodeId, primary, perEdge });
     }
 
+    case "generateImage": {
+      const data = (node.data ?? {}) as {
+        model?: string;
+        prompt?: string;
+        aspectRatio?: string;
+        inputUrl?: string | null;
+      };
+      const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
+      const inputImageUrl =
+        resolveImageInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputUrl ?? null;
+      const prompt = promptOverride ?? data.prompt ?? "";
+      if (!prompt.trim()) {
+        await prisma.nodeRun.update({
+          where: { id: nodeRunId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: `generateImage ${nodeId}: prompt is required`,
+          },
+        });
+        throw new Error(`generateImage ${nodeId}: prompt is required`);
+      }
+      const genImagePayload: GenerateImagePayload = {
+        workflowRunId,
+        nodeRunId,
+        nodeId,
+        model: data.model ?? "gemini-2.0-flash-preview-image-generation",
+        prompt,
+        inputImageUrl,
+        aspectRatio: data.aspectRatio,
+      };
+      return await runGenerateImage(genImagePayload);
+    }
+
+    case "generateVideo": {
+      const data = (node.data ?? {}) as {
+        model?: string;
+        prompt?: string;
+        durationSeconds?: number;
+        aspectRatio?: string;
+        inputUrl?: string | null;
+      };
+      const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
+      const inputImageUrl =
+        resolveImageInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputUrl ?? null;
+      const prompt = promptOverride ?? data.prompt ?? "";
+      if (!prompt.trim()) {
+        await prisma.nodeRun.update({
+          where: { id: nodeRunId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: `generateVideo ${nodeId}: prompt is required`,
+          },
+        });
+        throw new Error(`generateVideo ${nodeId}: prompt is required`);
+      }
+      const genVideoPayload: GenerateVideoPayload = {
+        workflowRunId,
+        nodeRunId,
+        nodeId,
+        model: data.model ?? "veo-3.1-generate-preview",
+        prompt,
+        inputImageUrl,
+        durationSeconds: data.durationSeconds ?? 6,
+        aspectRatio: data.aspectRatio ?? "16:9",
+      };
+      return await runGenerateVideo(genVideoPayload);
+    }
+
+    case "enhanceVideo": {
+      const data = (node.data ?? {}) as {
+        model?: string;
+        prompt?: string;
+        inputVideoUrl?: string | null;
+      };
+      const promptOverride = resolveTextInput(parentIds, parentByEdge, edges, nodeId, "prompt");
+      const inputVideoUrl =
+        resolveVideoInput(parentIds, parentByEdge, edges, nodeId) ?? data.inputVideoUrl ?? null;
+      if (!inputVideoUrl) {
+        await prisma.nodeRun.update({
+          where: { id: nodeRunId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: `enhanceVideo ${nodeId}: no input video — connect an upstream video output or upload locally`,
+          },
+        });
+        throw new Error(`enhanceVideo ${nodeId}: no input video`);
+      }
+      const enhancePayload: EnhanceVideoPayload = {
+        workflowRunId,
+        nodeRunId,
+        nodeId,
+        model: data.model ?? "veo-3.1-generate-preview",
+        prompt: promptOverride ?? data.prompt ?? "",
+        inputVideoUrl,
+      };
+      return await runEnhanceVideo(enhancePayload);
+    }
+
     case "stickyNote": {
       // Sticky notes shouldn't reach here — orchestrator filters them out
       // of the executable set. Defensive no-op so a stray sticky doesn't
@@ -472,6 +576,7 @@ function resolveImageInput(
     const out = parentByEdge[pid];
     if (!out) continue;
     if (out.kind === "cropImage") return out.output.url;
+    if (out.kind === "generateImage") return out.output.url;
     if (out.kind === "requestInputs") {
       const handle = (edge.sourceHandle ?? "").toLowerCase();
       const v = out.output.fields[handle];
@@ -546,9 +651,12 @@ function resolveTextInput(
     const out = parentByEdge[pid];
     if (!out) continue;
     if (out.kind === "gemini") return out.output.text;
-    // Crop output is an image URL — exposed as text so it can flow into
-    // the Response node alongside Gemini text.
+    // Crop/image/video outputs are URLs — exposed as text so they can flow
+    // into the Response node alongside Gemini text.
     if (out.kind === "cropImage") return out.output.url;
+    if (out.kind === "generateImage") return out.output.url;
+    if (out.kind === "generateVideo") return out.output.url;
+    if (out.kind === "enhanceVideo") return out.output.url;
     if (out.kind === "requestInputs") {
       const sourceHandle = (edge.sourceHandle ?? "").toLowerCase();
       const v = out.output.fields[sourceHandle];
@@ -556,6 +664,33 @@ function resolveTextInput(
       if (typeof v === "number" || typeof v === "boolean") return String(v);
     }
     if (out.kind === "response") return out.output.result;
+  }
+  return null;
+}
+
+function resolveVideoInput(
+  parentIds: string[],
+  parentByEdge: Record<string, NodeOutput>,
+  edges: CanvasEdge[],
+  childId: string,
+): string | null {
+  for (const pid of parentIds) {
+    const edge = findEdgeFromParent(pid, childId, edges).find(
+      (e) =>
+        (e.targetHandle ?? "").toLowerCase().includes("input") ||
+        (e.sourceHandle ?? "").toLowerCase().includes("video"),
+    );
+    if (!edge) continue;
+    const out = parentByEdge[pid];
+    if (!out) continue;
+    if (out.kind === "generateVideo") return out.output.url;
+    if (out.kind === "enhanceVideo") return out.output.url;
+    if (out.kind === "requestInputs") {
+      const handle = (edge.sourceHandle ?? "").toLowerCase();
+      const v = out.output.fields[handle];
+      if (typeof v === "object" && v && "url" in v) return (v as { url: string }).url;
+      if (typeof v === "string") return v;
+    }
   }
   return null;
 }
