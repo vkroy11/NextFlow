@@ -17,16 +17,6 @@ export type CropPayload = {
 export type CropOutput = { url: string };
 
 /**
- * PRD §"MANDATORY 30+ second artificial delay on Crop Image":
- * total wall-clock from worker start to SUCCESS must be at least 30 s.
- * The PRD only specifies the floor — not when the timer starts — so we
- * pipeline the (paid, ~5-10 s) Transloadit upload in parallel with the
- * delay rather than after it. Net wall-clock ≈ max(30 s, upload), not
- * 30 s + upload. Hard requirement — do not skip.
- */
-const ARTIFICIAL_DELAY_MS = 30_000;
-
-/**
  * Worker function (not a Trigger task). Updates the pre-created NodeRun
  * row instead of creating it: the orchestrator now pre-creates every
  * executable node's row in QUEUED status during setup so the History
@@ -41,8 +31,7 @@ const ARTIFICIAL_DELAY_MS = 30_000;
  */
 export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
   // SUCCESS-guard: if a previous attempt finished writing the output
-  // before crashing, don't redo the work — Transloadit's a paid round-trip
-  // and the 30 s artificial delay would double the wall-clock time.
+  // before crashing, don't redo the work — Transloadit is a paid round-trip.
   // Returning the persisted output keeps the worker idempotent under
   // Trigger.dev's retry policy.
   const existing = await prisma.nodeRun.findUnique({
@@ -78,14 +67,7 @@ export async function runCropImage(payload: CropPayload): Promise<CropOutput> {
       h: payload.h,
     });
 
-    // Pipeline the upload alongside the mandatory 30 s delay (PRD says
-    // "at least 30 s", not "30 s after upload"). Promise.all rejects fast
-    // on upload failure so the FAILED branch fires immediately instead
-    // of waiting out the delay on a doomed run.
-    const [{ url }] = await Promise.all([
-      uploadBufferToTransloadit(buf, "cropped.jpg", "image/jpeg"),
-      new Promise<void>((r) => setTimeout(r, ARTIFICIAL_DELAY_MS)),
-    ]);
+    const { url } = await uploadBufferToTransloadit(buf, "cropped.jpg", "image/jpeg");
 
     const finishedAt = new Date();
     await prisma.nodeRun.update({

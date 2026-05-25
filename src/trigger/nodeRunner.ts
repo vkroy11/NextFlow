@@ -461,7 +461,7 @@ async function executeWorker(args: {
         workflowRunId,
         nodeRunId,
         nodeId,
-        model: data.model ?? "gemini-2.0-flash-preview-image-generation",
+        model: data.model ?? "gemini-2.0-flash-exp-image-generation",
         prompt,
         inputImageUrl,
         aspectRatio: data.aspectRatio,
