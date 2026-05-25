@@ -34,13 +34,14 @@ export type ExtendVideoPayload = {
 export type ExtendVideoOutput = { url: string };
 
 /**
- * Worker for the extendVideo node. Uses Veo's `video` parameter to continue
- * (extend) an existing generated video. The `video` and `image` params are
- * mutually exclusive in Veo's API — this worker uses `video` while
- * generateVideo uses `image` for image-to-video mode.
+ * Worker for the extendVideo node.
  *
- * After Veo generates the continuation, FFmpeg stitches the original and the
- * new segment together so the output is always the full combined video.
+ * Veo on the Gemini Developer API does not accept the `video` parameter
+ * (the SDK serializes it as `encodedVideo`, which the model rejects). The
+ * supported path is image-to-video: we extract the LAST frame of the input
+ * video with FFmpeg and pass it as `image`, which makes Veo continue the
+ * scene from that frame. We then stitch original + continuation with FFmpeg
+ * so the output is always the full combined video.
  */
 export async function runExtendVideo(
   payload: ExtendVideoPayload,
@@ -70,22 +71,36 @@ export async function runExtendVideo(
 
   const workdir = await mkdtemp(join(tmpdir(), "nf-extend-"));
   try {
-    // Fetch input video — write to disk for FFmpeg and convert to base64 for Veo.
+    // 1. Fetch input video to disk.
     const videoRes = await fetch(payload.inputVideoUrl);
     if (!videoRes.ok) {
       throw new Error(`fetch input video: ${videoRes.status} ${videoRes.statusText}`);
     }
-    const videoArrBuf = await videoRes.arrayBuffer();
     const inputPath = join(workdir, "input.mp4");
-    await writeFile(inputPath, Buffer.from(videoArrBuf));
-    const videoB64 = Buffer.from(videoArrBuf).toString("base64");
+    await writeFile(inputPath, Buffer.from(await videoRes.arrayBuffer()));
+
+    // 2. Extract the LAST frame for Veo's image-to-video continuation.
+    //    -sseof -0.5 seeks to 0.5s before EOF, then -vframes 1 grabs one frame.
+    const lastFramePath = join(workdir, "last.jpg");
+    await execFileP(
+      FFMPEG,
+      ["-y", "-sseof", "-0.5", "-i", inputPath, "-vframes", "1", "-q:v", "2", lastFramePath],
+      { timeout: 60_000 },
+    );
+    const lastFrameBuf = await readFile(lastFramePath);
+    const lastFrameB64 = lastFrameBuf.toString("base64");
 
     const ai = googleAI();
 
+    // 3. Ask Veo to continue from the last frame.
+    const continuationPrompt = payload.prompt
+      ? `Continue the scene naturally. ${payload.prompt}`
+      : "Continue the scene naturally from this frame.";
+
     let operation = await ai.models.generateVideos({
       model: payload.model,
-      prompt: payload.prompt,
-      video: { videoBytes: videoB64 },
+      prompt: continuationPrompt,
+      image: { imageBytes: lastFrameB64, mimeType: "image/jpeg" },
       config: {
         durationSeconds: payload.durationSeconds,
         aspectRatio: payload.aspectRatio,
