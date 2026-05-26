@@ -121,7 +121,10 @@ export async function runGenerateVideo(
       durationSeconds: payload.durationSeconds,
       numberOfVideos: 1,
     };
-    if (payload.negativePrompt) veoConfig.negativePrompt = payload.negativePrompt;
+    // `negativePrompt` is *not* in the documented `parameters` list for
+    // veo-3.1-generate-preview on the Gemini Developer API and sending it
+    // returns 400 INVALID_ARGUMENT. Silently dropping for now — re-enable
+    // if/when the public API adds support.
     if (payload.resolution) veoConfig.resolution = payload.resolution;
     if (payload.personGeneration) veoConfig.personGeneration = payload.personGeneration;
     if (referenceImages && referenceImages.length > 0) veoConfig.referenceImages = referenceImages;

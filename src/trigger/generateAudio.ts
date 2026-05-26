@@ -87,31 +87,51 @@ export async function runGenerateAudio(
       ? `Speak with a ${payload.accent} accent: ${payload.prompt}`
       : payload.prompt;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ parts: [{ text: fullText }] }],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: payload.voiceName },
+    // Gemini TTS preview occasionally returns a response with no audio
+    // parts even though the API call resolved successfully. A short
+    // in-worker retry (2 extra attempts, 2-4 s back-off) handles this
+    // without burning a Trigger.dev retry cycle — which would otherwise
+    // race with the orchestrator and cause downstream nodes to skip
+    // before the retry succeeds.
+    const MAX_INLINE_ATTEMPTS = 3;
+    let audioB64: string | null = null;
+    let lastResponseShape: unknown = null;
+    for (let attempt = 0; attempt < MAX_INLINE_ATTEMPTS && !audioB64; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      }
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ parts: [{ text: fullText }] }],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: payload.voiceName },
+            },
           },
         },
-      },
-    });
-
-    let audioB64: string | null = null;
-    for (const candidate of response.candidates ?? []) {
-      for (const part of candidate.content?.parts ?? []) {
-        if (part.inlineData?.data && part.inlineData?.mimeType?.startsWith("audio/")) {
-          audioB64 = part.inlineData.data;
-          break;
+      });
+      for (const candidate of response.candidates ?? []) {
+        for (const part of candidate.content?.parts ?? []) {
+          if (part.inlineData?.data && part.inlineData?.mimeType?.startsWith("audio/")) {
+            audioB64 = part.inlineData.data;
+            break;
+          }
         }
+        if (audioB64) break;
       }
-      if (audioB64) break;
+      if (!audioB64) {
+        lastResponseShape = {
+          candidates: response.candidates?.length ?? 0,
+          parts: response.candidates?.[0]?.content?.parts?.length ?? 0,
+        };
+      }
     }
     if (!audioB64) {
-      throw new Error("Gemini TTS returned no audio in response");
+      throw new Error(
+        `Gemini TTS returned no audio after ${MAX_INLINE_ATTEMPTS} attempts (last shape: ${JSON.stringify(lastResponseShape)})`,
+      );
     }
 
     const pcm = Buffer.from(audioB64, "base64");
@@ -130,11 +150,12 @@ export async function runGenerateAudio(
     });
     return { url };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await prisma.nodeRun.update({
-      where: { id: payload.nodeRunId },
-      data: { status: "FAILED", finishedAt: new Date(), error: message },
-    });
+    // Don't write FAILED here — `nodeRunnerTask.onFailure` does that after
+    // the *final* Trigger.dev retry attempt is exhausted. Writing FAILED in
+    // the catch on every attempt races with the orchestrator's
+    // dispatch-ready-children logic, which can see the row as FAILED
+    // between attempts and skip every descendant before the next retry
+    // gets a chance to succeed.
     rethrowClassified(err);
   }
 }

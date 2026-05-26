@@ -382,16 +382,6 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<Data>) {
           open={showSettings}
           onToggle={() => setShowSettings((v) => !v)}
         >
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-gray-600">Negative Prompt</span>
-            <textarea
-              value={data?.negativePrompt ?? ""}
-              onChange={(e) => updateNodeData(id, { negativePrompt: e.target.value || undefined })}
-              placeholder="What to avoid in the video..."
-              rows={2}
-              className="nodrag w-full resize-y rounded-lg border border-gray-200 bg-[#FAFAFA] px-3 py-1.5 text-[12px] text-gray-800 outline-none focus:border-workflow-accent-400 focus:bg-white"
-            />
-          </label>
           <div>
             <span className="mb-1 block text-[11px] font-medium text-gray-600">Resolution</span>
             <div className="flex gap-1">

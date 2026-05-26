@@ -337,7 +337,13 @@ async function executeWorker(args: {
 }): Promise<unknown> {
   const { node, edges, nodeRunId, workflowRunId, parentByEdge, graph } = args;
   const nodeId = node.id;
-  const parentIds = graph.inn.get(nodeId) ?? [];
+  // `graph.inn` stores parent ids once per edge (needed by topoSort which
+  // uses indeg as an edge count). The resolvers below iterate parents and
+  // then iterate *every* edge from that parent — so if the same parent is
+  // listed 3× (3 image_field edges → 1 vision target), each parent visit
+  // re-emits all 3 URLs, producing 9. Dedupe here so each resolver sees
+  // unique parent ids; the inner edge loop still enumerates every edge.
+  const parentIds = Array.from(new Set(graph.inn.get(nodeId) ?? []));
 
   switch (node.type) {
     case "cropImage": {

@@ -107,7 +107,6 @@ export async function runEnhanceVideo(
         durationSeconds: payload.durationSeconds ?? 6,
         aspectRatio: payload.aspectRatio ?? "16:9",
         numberOfVideos: 1,
-        ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
       },
     });
 

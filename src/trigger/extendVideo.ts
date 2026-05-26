@@ -112,7 +112,6 @@ export async function runExtendVideo(
             durationSeconds: 8, // Native extension requires 8 s.
             aspectRatio: payload.aspectRatio,
             numberOfVideos: 1,
-            ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
             ...(payload.resolution ? { resolution: payload.resolution } : {}),
             ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
           },
@@ -184,7 +183,6 @@ export async function runExtendVideo(
           durationSeconds: payload.durationSeconds,
           aspectRatio: payload.aspectRatio,
           numberOfVideos: 1,
-          ...(payload.negativePrompt ? { negativePrompt: payload.negativePrompt } : {}),
           ...(payload.resolution ? { resolution: payload.resolution } : {}),
           ...(payload.personGeneration ? { personGeneration: payload.personGeneration } : {}),
         },
