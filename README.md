@@ -1,4 +1,4 @@
-# NextFlow
+  # NextFlow
 
 A pixel-perfect clone of [Galaxy.ai](https://galaxy.ai)'s workflow builder, focused on LLM workflows powered by Google Gemini and orchestrated through Trigger.dev.
 
