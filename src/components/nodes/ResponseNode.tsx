@@ -192,11 +192,11 @@ function ResultCard({
   onCancelRename: () => void;
   onDelete: () => void;
 }) {
-  // Treat the result as an image when either the upstream node says so
-  // (Crop output is always an image) or the value pattern-matches a known
-  // image URL / data-URL shape. Anything else renders as text.
-  const isImage =
-    !!row.result && (row.sourceType === "cropImage" || looksLikeImageUrl(row.result));
+  // Treat the result as media when either the upstream node says so
+  // (Crop output is always an image, the video generators always a video)
+  // or the value pattern-matches a known asset URL / data-URL shape.
+  // Anything else renders as text.
+  const mediaKind = row.result ? mediaKindFor(row.result, row.sourceType) : null;
 
   return (
     <div className="rounded-lg bg-[#F5F5F5] p-3">
@@ -232,8 +232,12 @@ function ResultCard({
       </div>
 
       {row.result ? (
-        isImage ? (
-          <ImageResultPreview url={row.result} filename={`${row.label || row.autoLabel}.jpg`} />
+        mediaKind ? (
+          <MediaResultPreview
+            url={row.result}
+            kind={mediaKind}
+            filename={`${row.label || row.autoLabel}.${EXT_FOR_KIND[mediaKind]}`}
+          />
         ) : (
           <div className="flex min-h-[48px] items-center justify-center rounded border border-dashed border-gray-200 bg-white p-3 text-[12px] text-gray-500">
             <span className="block w-full whitespace-pre-wrap break-words text-left">
@@ -250,7 +254,15 @@ function ResultCard({
   );
 }
 
-function ImageResultPreview({ url, filename }: { url: string; filename: string }) {
+function MediaResultPreview({
+  url,
+  kind,
+  filename,
+}: {
+  url: string;
+  kind: MediaKind;
+  filename: string;
+}) {
   const [busy, setBusy] = useState(false);
 
   async function handleDownload() {
@@ -292,12 +304,19 @@ function ImageResultPreview({ url, filename }: { url: string; filename: string }
 
   return (
     <div className="relative overflow-hidden rounded border border-gray-200 bg-white">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt="cropped result"
-        className="block max-h-56 w-full object-contain"
-      />
+      {kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="result" className="block max-h-56 w-full object-contain" />
+      ) : kind === "video" ? (
+        <video
+          src={url}
+          controls
+          playsInline
+          className="nodrag block max-h-56 w-full bg-black object-contain"
+        />
+      ) : (
+        <audio src={url} controls className="nodrag block w-full p-2" />
+      )}
       <button
         type="button"
         onClick={handleDownload}
@@ -315,11 +334,68 @@ function ImageResultPreview({ url, filename }: { url: string; filename: string }
   );
 }
 
+/** Node types whose canvas data exposes a single asset URL as `outputUrl`. */
+const MEDIA_OUTPUT_TYPES = new Set([
+  "cropImage",
+  "generateImage",
+  "generateVideo",
+  "enhanceVideo",
+  "extendVideo",
+  "generateAudio",
+  "muxAudioVideo",
+]);
+
+type MediaKind = "image" | "video" | "audio";
+
+const EXT_FOR_KIND: Record<MediaKind, string> = {
+  image: "jpg",
+  video: "mp4",
+  audio: "mp3",
+};
+
+/** Upstream node types that always emit a given media kind, regardless of URL shape. */
+const KIND_FOR_SOURCE_TYPE: Record<string, MediaKind> = {
+  cropImage: "image",
+  generateImage: "image",
+  generateVideo: "video",
+  enhanceVideo: "video",
+  extendVideo: "video",
+  muxAudioVideo: "video",
+  generateAudio: "audio",
+};
+
+/**
+ * Decide how to render a result value. The upstream node type wins when it
+ * is media-producing — signed CDN URLs (and Veo's `?alt=media` download
+ * links) frequently carry no usable file extension. Otherwise fall back to
+ * sniffing the URL, which is all we have for text-typed sources.
+ */
+function mediaKindFor(v: string, sourceType: string): MediaKind | null {
+  const byType = KIND_FOR_SOURCE_TYPE[sourceType];
+  if (byType) return byType;
+  if (looksLikeImageUrl(v)) return "image";
+  if (looksLikeVideoUrl(v)) return "video";
+  if (looksLikeAudioUrl(v)) return "audio";
+  return null;
+}
+
 function looksLikeImageUrl(v: string): boolean {
   if (v.startsWith("data:image/")) return true;
   // Strip query so .png?sig=... still matches.
   const path = v.split("?")[0];
   return /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(path);
+}
+
+function looksLikeVideoUrl(v: string): boolean {
+  if (v.startsWith("data:video/")) return true;
+  const path = v.split("?")[0];
+  return /\.(mp4|webm|mov|m4v)$/i.test(path);
+}
+
+function looksLikeAudioUrl(v: string): boolean {
+  if (v.startsWith("data:audio/")) return true;
+  const path = v.split("?")[0];
+  return /\.(mp3|wav|ogg|m4a|aac)$/i.test(path);
 }
 
 /**
@@ -338,7 +414,8 @@ function deriveUpstreamResult(sourceNode: RFNode, sourceHandle: string | null): 
     fieldType?: string;
     value?: unknown;
   };
-  if (sourceNode.type === "cropImage") {
+  // Crop + every media generator publish their asset on `outputUrl`.
+  if (MEDIA_OUTPUT_TYPES.has(sourceNode.type ?? "")) {
     return typeof data.outputUrl === "string" ? data.outputUrl : null;
   }
   if (sourceNode.type === "gemini") {

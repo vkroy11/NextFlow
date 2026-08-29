@@ -134,12 +134,23 @@ export function buildResponseInputs(
       if (!out) continue;
       let v: string | null = null;
       if (out.kind === "gemini") v = out.output.text;
-      else if (out.kind === "cropImage") v = out.output.url;
+      else if (out.kind === "response") v = out.output.result;
       else if (out.kind === "requestInputs") {
         const sourceHandle = (edge.sourceHandle ?? "").toLowerCase();
         const x = out.output.fields[sourceHandle];
         if (typeof x === "string") v = x;
         else if (typeof x === "number" || typeof x === "boolean") v = String(x);
+        // Uploaded file fields are stored as `{ url }` objects, not bare strings.
+        else if (x && typeof x === "object" && "url" in x) {
+          const u = (x as { url: unknown }).url;
+          if (typeof u === "string") v = u;
+        }
+      } else {
+        // Every remaining kind (crop + all the media generators) resolves to
+        // a single asset URL. Enumerating them individually is how the media
+        // nodes got missed here in the first place, so key off the shape.
+        const url = (out.output as { url?: unknown }).url;
+        if (typeof url === "string") v = url;
       }
       if (v !== null) {
         perEdge[edge.id] = v;
